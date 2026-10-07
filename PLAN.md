@@ -269,6 +269,7 @@ bench when adding cases or switching model.
 - The thinking budget applies per step; multi-step turns can still reason at length.
 - Keyboard: at most 256 dead-key combinations per layout (kernel MAX_DIACR); compose sequences not loaded.
 - The framebuffer UI is not redrawn after switching VT and back (nothing else runs on the other VTs).
-- Image: 4.6 GB qcow2 (brain 1.5 GB + controller 2.9 GB); the OS itself is 23 MB. Brain + controller need ~6 GB RAM
-  before KV cache: give the VM at least 8 GB.
+- Sizes: installer ISO 67 MB; the OS 25 MB; default models 4.3 GB (MiniCPM5 2B 1.5 GB + Kev 4B 2.8 GB), downloaded
+  at install. The dev image (`./build.sh`) is a 4.6 GB qcow2 with the models baked in. Brain + controller need
+  ~6.5 GB RAM with the defaults: give the VM at least 8 GB.
 - On a slow CPU the controller dominates latency (≈ tokens read per decision / prompt speed; dev box ~20 tok/s on a 4B).

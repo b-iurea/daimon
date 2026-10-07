@@ -1,8 +1,22 @@
+<div align="center">
+
 # Daimon
 
 **An operating system where the language model *is* the system.**
 
-`0.2.0` · codename **Deucalion** · x86_64 · UEFI · GPL-3.0
+[![version](https://img.shields.io/badge/version-0.2.0-22c55e?style=flat-square)](PLAN.md#roadmap--0x-deucalion)
+[![codename](https://img.shields.io/badge/codename-Deucalion-38bdf8?style=flat-square)](PLAN.md#name-and-releases)
+[![ISO](https://img.shields.io/badge/ISO-67_MB-f59e0b?style=flat-square)](#install)
+[![OS](https://img.shields.io/badge/OS-25_MB-f59e0b?style=flat-square)](#size)
+[![license](https://img.shields.io/badge/license-GPL--3.0-a78bfa?style=flat-square)](LICENSE)
+<br>
+[![platform](https://img.shields.io/badge/x86__64-UEFI-334155?style=flat-square)](#install)
+[![kernel](https://img.shields.io/badge/Linux-6.18_LTS-334155?style=flat-square&logo=linux&logoColor=white)](kernel/aios.config)
+[![rust](https://img.shields.io/badge/Rust-2024-334155?style=flat-square&logo=rust&logoColor=white)](aios)
+[![llama.cpp](https://img.shields.io/badge/inference-llama.cpp-334155?style=flat-square)](https://github.com/ggml-org/llama.cpp)
+[![models](https://img.shields.io/badge/models-Hugging_Face-334155?style=flat-square&logo=huggingface&logoColor=white)](#models)
+
+</div>
 
 ![Daimon booting](docs/boot.gif)
 
@@ -12,7 +26,7 @@ to the system, and the system acts on itself, inspecting its own state, changing
 modules and remembering what matters. A second, smaller model, the **controller**, judges every change before it
 happens.
 
-The whole OS is a single 25 MB EFI file. The models are downloaded at install time.
+The whole OS is a single 25 MB EFI file; the installer ISO is 67 MB. The models are downloaded at install time.
 
 > In Unix a *daemon* is the process that quietly runs the machine; in Greek the *daimon* is a guiding spirit.
 > Here the model is both.
@@ -63,6 +77,15 @@ verdict, so the owner sees what the system was about to do and why it was stoppe
 
 ![The console](docs/console.png)
 
+## Size
+
+| | |
+|---|---|
+| Installer ISO (the release download) | **67 MB** |
+| The OS: one EFI file with kernel, init, agent, console and llama.cpp | **25 MB** |
+| Default models, downloaded during the install: MiniCPM5 2B (1.5 GB) + Kev 4B (2.8 GB) | 4.3 GB |
+| Smallest pair: MiniCPM5 1B (0.6 GB) + Kev 0.8B (0.8 GB) | 1.4 GB |
+
 ## Install
 
 **You need** an x86_64 machine or VM with UEFI (Secure Boot off) and a CPU with AVX2, at least 8 GB of RAM for the
@@ -78,6 +101,8 @@ installation.
 3. Answer the installer: keyboard, disk, your name, the machine name, the brain, the controller and, optionally,
    anything you want to add to the agent's instructions. Type `erase` to confirm.
 4. When the downloads are done, remove the installation medium and press Enter.
+
+![The installer](docs/installer.png)
 
 ### Models
 
