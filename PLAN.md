@@ -34,7 +34,7 @@ installs on real hardware, updates itself safely and runs unattended.
 | Version | Theme | Status |
 |---|---|---|
 | **0.1.0** | Foundation: boot, agent, console, memory, controller, splash | ✅ released 2026-10-07 (`v0.1.0`) |
-| **0.2.0** | Installable: ISO installer, model download, resilient console, system changes in memory, `/` completion | ✅ done, to tag |
+| **0.2.0** | Installable: ISO installer, model download, resilient console, system changes in memory, `/` completion | ✅ released 2026-10-08 (`v0.2.0`) |
 | **0.3.0** | The agent as a service, the console as a window | planned |
 | **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
 | **0.5.0** | Controller hardening | planned |
