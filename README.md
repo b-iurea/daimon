@@ -18,7 +18,7 @@
 
 </div>
 
-![Daimon booting](docs/boot.gif)
+<p align="center"><img src="docs/boot.gif" alt="Daimon booting" width="640"></p>
 
 Daimon is a minimal Linux in which a local language model runs the machine. There is no shell, no package manager
 and no systemd: the kernel boots straight into one Rust binary that is init, supervisor, agent and console. You talk
