@@ -26,15 +26,95 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 
 - Repository: github.com/b-iurea/daimon (private), GPL-3.0-or-later.
 
-## Status
+## Roadmap — 0.x "Deucalion"
 
-### ✅ Phase 0 — minimal boot
+Every step is a minor version; the whole 0.x line is Deucalion. Order can change; 1.0 "Talos" comes when Daimon can
+be installed on real hardware, update itself safely and run unattended.
+
+| Version | Theme | Status |
+|---|---|---|
+| **0.1.0** | Foundation: boot, agent, console, memory, controller, splash | ✅ released 2026-10-07 (`v0.1.0`) |
+| **0.2.0** | Resilient console: watchdog, Ctrl+Alt+Del, system changes in memory | ✅ done, to tag |
+| **0.3.0** | The agent as a service, the console as a window | planned |
+| **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
+| **0.5.0** | Controller hardening | planned |
+| **0.6.0** | Autonomy: the system looks after itself | planned |
+| **0.7.0** | First boot: hardware detection, model download | planned |
+| **0.8.0** | Bare-metal installer | planned |
+| **0.9.0** | Signed A/B updates with rollback | planned |
+| **1.0.0** | **Talos** | — |
+
+Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now (paused).
+
+### 0.3.0 — The agent as a service, the console as a window
+- The agent loop leaves the TUI process: a new module `agent`, always on, serving a local socket
+  (`/run/aios/agent.sock`, JSON lines: prompts and confirmations in, the event flow out).
+- The TUI becomes a client. **More windows on the same system**: screen, LAN, later a web page all see the same
+  activity, and any of them can answer the controller's confirmations.
+- A console freeze or restart no longer interrupts an action halfway (a multi-step change completes); the
+  conversation survives too.
+- A pending confirmation no longer blocks everything: timeout = "no".
+
+### 0.4.0 — Daimon on the LAN
+- Today `:8080` is the bare brain: no tools, no memory, no controller. Expose **the agent** instead, OpenAI-compatible
+  (`/v1/chat/completions`), so a laptop or phone talks to *the system*, with every rule and controller check.
+- Owner authentication (token generated at first boot, shown on the console), LAN only.
+- The bare llama-server goes back to `127.0.0.1` (optional setting to expose it).
+
+### 0.5.0 — Controller hardening
+- Grow the bench (more owner phrasings, more disguised attacks) and re-check thresholds.
+- Consider fine-tuning Kev-4B (or Kev-0.8B for small machines) on our own cases (`kev.train --init_from jaredpalmer/kev-0.8b`).
+- Before autonomy: with nobody at the screen, the controller is the only check.
+
+### 0.6.0 — Autonomy
+- The agent reacts to system events without anyone at the screen: a module crash-looping, disk or RAM almost full,
+  network lost, and to tasks scheduled by the owner.
+- Same rules as a request from the owner: the controller judges every action; what needs the owner waits for them
+  and is shown on every window.
+
+### 0.7.0 — First boot
+- Hardware detection and model download from Hugging Face, chosen by CPU/GPU/RAM (the image keeps a default brain +
+  controller so it works offline).
+
+### 0.8.0 — Bare-metal installer
+- Install from a USB stick to a disk, data-partition resize.
+
+### 0.9.0 — Signed A/B updates
+- Signed A/B updates of the OS, the inference engine and skills, with automatic rollback when the new version does not
+  come up.
+
+## Done
+
+### 0.2.0 — Resilient console
+
+#### ✅ Console that can't stay frozen (2026-10-07)
+- Supervisor **watchdog**: a module with a `watchdog` file (seconds) must call `heartbeat()` (touches
+  `/run/aios/alive.<name>`) at least that often or it is killed and restarted. The `tui` has 10 s and beats every second
+  from the UI loop and the splash.
+- **Ctrl+Alt+Del restarts the console** instead of rebooting: PID 1 sets `RB_DISABLE_CAD`, the kernel turns the key
+  into SIGINT for PID 1, which kills every tty module (the keyboard driver handles it, so it works however frozen the
+  console is). Verified in QEMU. A restarted console starts a new conversation; what matters is in memory.
+
+#### ✅ System changes recorded in memory (2026-10-07)
+- Written by code, not by the model, so they skip the controller and can't be forgotten:
+  - `system/wiki/setting-<key>.md`: "This system: <key> is <value> (since <date>, set by the owner|agent)" + the
+    last 20 changes (old -> new, by whom). From `/set` and the `config_set` tool (one funnel: `agent::set_config`).
+  - `system/wiki/changes-to-this-system.md`: last 100 changes, newest first: settings, files written, commands run,
+    reboots/power-off, factory reset.
+  - Read-only commands are filtered out (`agent::read_only`): a strict allowlist (`ls`, `cat`, `ip addr`, `dmesg`, …)
+    with the arguments that would make a reader write checked (`dmesg -c`, `ip link set`, `sysctl -w`, `find -delete`,
+    `date -s`, …). Anything unknown counts as a change.
+- The prompt tells the agent not to duplicate them and to save only the *why*.
+
+### 0.1.0 — Foundation
+
+#### ✅ Phase 0 — minimal boot
 - Linux 6.18 LTS, EFI stub (the kernel is the bootloader), built-in initramfs and cmdline.
 - `aios` as PID 1: mounts, network, module supervisor (`/etc/aios/modules`, overrides in `/data/modules`,
   rescan every 0.5 s, crash backoff).
 - Static llama-server (CPU, AVX2).
 
-### ✅ Phase 1 — agent + TUI
+#### ✅ Phase 1 — agent + TUI
 - DHCP client in Rust; data partition found by GPT label `aios-data`.
 - Agent: streaming tool-calling loop over llama-server. Tools: `status`, `read_file`, `write_file`, `list_dir`, `run`,
   `config_set`, `restart_module`, `power`, `memory_save/search/read/forget`.
@@ -43,7 +123,7 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
   Proxmox: `--cpu host` (AVX2), `--bios ovmf`, `--efidisk0 ...,pre-enrolled-keys=0` (Secure Boot off).
 - WSL: `sudo usermod -aG kvm $USER`, `wsl --shutdown`, then `./build.sh run`.
 
-### ✅ Settings, prompt, context
+#### ✅ Settings, prompt, context
 - Default brain in the image: **openbmb/MiniCPM5-2B-GGUF Q4_K_M** (temp 1.0, top_p 0.95, min_p 0, repeat_penalty 1.05).
 - `/data/aios/config`: `ctx` (32768, model max 131072), `kv_cache`, `threads`, `port`, `model`, `extra_args` → restart `llm`;
   `judge_model`, `judge_port` → restart `judge`; `controller`, `thinking`, `thinking_budget` (512), sampling, `max_steps` → live.
@@ -52,11 +132,11 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
   replaceable with `/data/aios/system.md`.
 - Prompt-cache warm-up at boot; "reading context N/M" progress; oldest turns dropped at 70% of the context.
 
-### ✅ English as the standard language
+#### ✅ English as the standard language
 - UI, console commands, agent messages, settings help, memory notes and tool arguments are English.
 - The agent replies in English unless the owner explicitly asks for another language (then it remembers that preference).
 
-### ✅ Long-term memory
+#### ✅ Long-term memory
 - **llm-wiki style** plain Markdown, the only source of truth: `/data/memory/<category>/wiki/<slug>.md` with frontmatter;
   `_index.md` generated by code. Search: **BM25** in Rust (no dependencies). A vector layer may come later, only as a
   derived, rebuildable index.
@@ -69,7 +149,7 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
   `The owner wants the agent to ...` · `This system: ...` · `The agent's own behaviour: ...`.
   A refused note may be rewritten once in that form, otherwise dropped.
 
-### ✅ Controller ("System 1" decision model)
+#### ✅ Controller ("System 1" decision model)
 - llama.cpp natively serves decision models: `POST /v1/systemone` (PR ggml-org/llama.cpp#29818, merged 2026-10-02,
   included in our build). No PyTorch, no Rust port: the controller is a second llama-server module, `judge`,
   on `127.0.0.1:8081`.
@@ -91,7 +171,7 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 - Verified in the VM: preference note saved; "my colleague Marco loves Python" refused; reboot stopped for confirmation
   and dropped on "n"; `temperature 0.8` passed silently (match 0.94, risk 0.12).
 
-#### Benchmark (cold, no fine-tuning) — `bench/judge.py`, `bench/rules.py`, raw data in `bench/results.json`
+##### Benchmark (cold, no fine-tuning) — `bench/judge.py`, `bench/rules.py`, raw data in `bench/results.json`
 30 English notes (14 allowed, 16 forbidden, many disguised: injections, "Owner preference: Ferrari", Kubernetes tips,
 wife/colleague, work), 4 Italian notes, 18 owner-request/action pairs. CPU, 4 threads.
 
@@ -115,7 +195,7 @@ Notes: with a bare yes/no question (no `criteria` descriptions) every model lean
 "system". Every model under-rated "reboot" as destructive → hard rule. Thresholds were tuned on ~50 cases: re-run the
 bench when adding cases or switching model.
 
-### ✅ Console UI on the framebuffer (2026-10-05)
+#### ✅ Console UI on the framebuffer (2026-10-05)
 - `aios/src/fb.rs`: a ratatui backend that paints `/dev/fb0` directly (kernel `CONFIG_FB_DEVICE=y`): 24-bit colour,
   anti-aliased glyphs, VT in `KD_GRAPHICS` so the kernel console does not draw over it. No usable framebuffer
   (or not 32 bpp) → falls back to the text console; the footer says why.
@@ -129,7 +209,7 @@ bench when adding cases or switching model.
   asked), the verdict and the latency. A "judging…" placeholder with a timer shows while Kev-4B works.
   Sidebar: controller model, state, last decision, allowed/stopped counts, average latency.
 
-### ✅ Keyboard layouts (2026-10-05)
+#### ✅ Keyboard layouts (2026-10-05)
 - 59 layouts (us, us-intl, dvorak, colemak, gb, it, de, fr, bepo, es, pt, br, ch, nordics, pl, cz, hu, ro, tr, gr, ru,
   ua, jp, …) built from the host's XKB data by `tools/mkkeymaps.py` (ckbcomp) into `/usr/share/aios/keymaps`, with
   the dead-key table derived from Unicode composition. Loaded by `aios/src/keyboard.rs` with `KDSKBENT` /
@@ -137,7 +217,7 @@ bench when adding cases or switching model.
 - `keymap` setting (`/set keymap it`, or ask the agent): applied at once and at every boot; a wrong name lists them all.
   `/keymaps` lists them with descriptions. Verified in QEMU: è é à ò ù ì £ € [ ] { @ on `it`.
 
-### ✅ Boot splash (2026-10-07)
+#### ✅ Boot splash (2026-10-07)
 - `aios/src/splash.rs`, run by the `tui` module on the framebuffer from the moment it starts: the mark (a ring drawn
   on, two counter-rotating comets, a breathing core with a glow), the **DAIMON** wordmark (URW Gothic, rendered at
   build time by `tools/mklogo.py` into `/usr/share/aios/logo.alf`, scaled at runtime) with a light sweep, version and
@@ -149,36 +229,8 @@ bench when adding cases or switching model.
 - Kernel cmdline `vt.global_cursor_default=0`: no blinking cursor between firmware and splash.
 - Verified in QEMU (1280x800): `docs/boot.gif`.
 
-### ✅ Console that can't stay frozen (2026-10-07)
-- Supervisor **watchdog**: a module with a `watchdog` file (seconds) must call `heartbeat()` (touches
-  `/run/aios/alive.<name>`) at least that often or it is killed and restarted. The `tui` has 10 s and beats every second
-  from the UI loop and the splash.
-- **Ctrl+Alt+Del restarts the console** instead of rebooting: PID 1 sets `RB_DISABLE_CAD`, the kernel turns the key
-  into SIGINT for PID 1, which kills every tty module (the keyboard driver handles it, so it works however frozen the
-  console is). Verified in QEMU. A restarted console starts a new conversation; what matters is in memory.
-
-### ✅ System changes recorded in memory (2026-10-07)
-- Written by code, not by the model, so they skip the controller and can't be forgotten:
-  - `system/wiki/setting-<key>.md`: "This system: <key> is <value> (since <date>, set by the owner|agent)" + the
-    last 20 changes (old -> new, by whom). From `/set` and the `config_set` tool (one funnel: `agent::set_config`).
-  - `system/wiki/changes-to-this-system.md`: last 100 changes, newest first: settings, files written, commands run,
-    reboots/power-off, factory reset.
-- The prompt tells the agent not to duplicate them and to save only the *why*.
-
-## Next steps
-1. Grow the bench (more owner phrasings, more disguised attacks) and re-check thresholds; consider fine-tuning Kev-4B (or Kev-0.8B for small machines)
-   on our own cases (`kev.train --init_from jaredpalmer/kev-0.8b`).
-2. Separate the agent from the TUI (the conversation survives a TUI restart).
-3. First boot: hardware detection and model download from Hugging Face (the image keeps a default brain + controller).
-4. Installer for bare metal, data-partition resize.
-5. Signed A/B updates of the inference engine and skills, with rollback.
-
-## Paused
-- GPU drivers: NVIDIA (CUDA) and AMD (Vulkan/RADV). CPU only for now.
-
 ## Known limits
-- Agent and TUI share one process: a console restart starts a new conversation; a pending confirmation blocks the agent until answered.
-- `run` is logged in the changelog even when read-only.
+- Until 0.3.0, agent and TUI share one process: a console restart starts a new conversation; a pending confirmation blocks the agent until answered.
 - Context tokens estimated as chars/3; the memory index is injected whole into the prompt.
 - DHCP renewal = full DORA at half lease. Module logs are not rotated (tmpfs).
 - The thinking budget applies per step; multi-step turns can still reason at length.

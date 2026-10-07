@@ -471,9 +471,8 @@ pub fn call(name: &str, args: &str) -> String {
         }),
         "run" => {
             let argv: Vec<String> = a["argv"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
-            // ponytail: every run is logged, read-only ones too; filter if the changelog gets noisy
             let out = run_cmd(&argv);
-            if let Ok(o) = &out {
+            if let (Ok(o), false) = (&out, read_only(&argv)) {
                 crate::memory::record_change("agent", &format!("ran `{}` ({})", argv.join(" "), o.lines().next().unwrap_or("")));
             }
             out
@@ -547,9 +546,45 @@ fn run_cmd(argv: &[String]) -> Result<String, String> {
     Ok(clip(format!("exit {code}\n{text}")))
 }
 
+/// Commands that only look at the system: they stay out of the changelog. Strict allowlist, with the
+/// arguments that would make a reader write checked; anything unknown counts as a change.
+fn read_only(argv: &[String]) -> bool {
+    let Some((prog, args)) = argv.split_first() else {
+        return true;
+    };
+    let has = |flags: &[&str]| args.iter().any(|a| flags.iter().any(|f| a == f || a.starts_with(&format!("{f}="))));
+    match prog.rsplit('/').next().unwrap_or(prog) {
+        "cat" | "ls" | "ps" | "df" | "du" | "free" | "uname" | "uptime" | "id" | "whoami" | "pwd" | "env" | "printenv" | "head" | "tail"
+        | "grep" | "egrep" | "fgrep" | "wc" | "stat" | "file" | "which" | "lsblk" | "lscpu" | "lspci" | "lsusb" | "lsmod" | "blkid"
+        | "findmnt" | "ss" | "netstat" | "ping" | "nproc" | "md5sum" | "sha256sum" | "readlink" | "realpath" | "basename" | "dirname"
+        | "echo" | "true" | "test" | "cut" | "tr" | "diff" | "cmp" | "pgrep" | "nslookup" | "dig" => true,
+        "dmesg" => !has(&["-c", "-C", "--clear", "--read-clear", "-n", "--console-level", "-D", "--console-off", "-E", "--console-on"]),
+        "find" => !has(&["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]),
+        "sort" => !has(&["-o", "--output"]),
+        // ip [options] <object> [command ...]: no command or a listing command
+        "ip" => !has(&["-b", "-batch", "--batch"]) && args.iter().filter(|a| !a.starts_with('-')).nth(1).is_none_or(|c| matches!(c.as_str(), "show" | "list" | "ls" | "lst" | "get")),
+        "sysctl" => !args.iter().any(|a| a.contains('=') || matches!(a.as_str(), "-w" | "--write" | "-p" | "--load" | "--system")),
+        "date" => args.iter().all(|a| a.starts_with('+') || matches!(a.as_str(), "-u" | "--utc" | "-R" | "-I") || a.starts_with("--iso")),
+        "hostname" | "mount" => args.is_empty(),
+        "llama-server" => has(&["--version", "--help", "-h"]),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_only_commands_are_not_changes() {
+        let ro = |c: &str| read_only(&c.split_whitespace().map(String::from).collect::<Vec<_>>());
+        for c in ["ls -la /data", "/bin/cat /proc/meminfo", "dmesg", "ip addr", "ip -4 route show", "ip link", "sysctl vm.swappiness", "date +%s", "mount", "find /data -name x"] {
+            assert!(ro(c), "{c}");
+        }
+        for c in ["rm -rf /data", "dmesg -c", "ip addr add 10.0.0.2/24 dev eth0", "ip link set eth0 down", "sysctl -w vm.swappiness=10", "sysctl vm.swappiness=10", "date -s 12:00", "hostname box", "mount /dev/sda1 /mnt", "find /tmp -delete", "sort -o /etc/x y", "sh -c ls", "llama-server -m x.gguf"] {
+            assert!(!ro(c), "{c}");
+        }
+    }
 
     #[test]
     fn trim_drops_oldest_turns_keeps_system() {
