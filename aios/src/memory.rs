@@ -34,6 +34,13 @@ pub fn save(category: &str, title: &str, content: &str) -> Result<String, String
     Ok(format!("saved {}", path.display()))
 }
 
+/// A note written by code from the owner's own answers (installer): skips the controller.
+pub fn note(category: &str, title: &str, content: &str) {
+    if let Err(e) = save_in(Path::new(ROOT), category, title, content) {
+        crate::log(&format!("memory: {title}: {e}"));
+    }
+}
+
 // ---------------------------------------------------------------- system changes
 //
 // Recorded by code, never by the model: they are about this system by construction, so they skip the

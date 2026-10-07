@@ -19,6 +19,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
+#[path = "setup.rs"]
+mod setup;
+
 // ---------------------------------------------------------------- theme (slate dark + green accent)
 
 const BG: Color = Color::Rgb(15, 23, 42);
@@ -217,6 +220,20 @@ struct App {
     font: String,
     /// brain warm-up finished: Some(ok)
     warm: Option<bool>,
+    /// selected row of the "/" completion popup; hidden with Esc until the input changes
+    pick: usize,
+    pop_hidden: bool,
+}
+
+impl App {
+    fn suggestions(&self) -> Vec<(String, String)> {
+        if self.pop_hidden || self.busy || self.confirm.is_some() { vec![] } else { completions(&self.input, &self.sys.modules) }
+    }
+
+    fn edited(&mut self) {
+        self.pick = 0;
+        self.pop_hidden = false;
+    }
 }
 
 impl App {
@@ -299,6 +316,8 @@ pub fn run() {
         tick: 0,
         font: String::new(),
         warm: None,
+        pick: 0,
+        pop_hidden: false,
     };
     let _ = ratatui::crossterm::terminal::enable_raw_mode();
     let hook = std::panic::take_hook();
@@ -316,22 +335,30 @@ pub fn run() {
                 FANCY.store(false, Ordering::Relaxed);
                 app.font = format!("text console: {why}");
                 let mut term = ratatui::init();
+                if crate::install::needed() {
+                    setup::run(&mut term, ips);
+                    let _ = prompts.send(Cmd::Reset);
+                }
                 ui_loop(&mut term, &mut app, &ev_rx, &llm_rx, &prompts, &cancel, None);
                 ratatui::restore();
                 break;
             }
         };
         FANCY.store(true, Ordering::Relaxed);
-        let mut fb = fb;
-        // ponytail: splash only on the framebuffer; the text console goes straight to the UI
-        if !std::path::Path::new(SPLASH_DONE).exists() {
-            boot_splash(&mut fb, &mut app, &ev_rx, &llm_rx);
-        }
         let (w, h) = fb.cell_px();
         app.font = format!("font {w}x{h}");
         let Ok(mut term) = Terminal::new(fb) else {
             break;
         };
+        // nothing to run without models: the wizard first (a full install ends in a reboot)
+        if crate::install::needed() {
+            setup::run(&mut term, ips);
+            let _ = prompts.send(Cmd::Reset);
+        }
+        // ponytail: splash only on the framebuffer; the text console goes straight to the UI
+        if !std::path::Path::new(SPLASH_DONE).exists() {
+            boot_splash(term.backend_mut(), &mut app, &ev_rx, &llm_rx);
+        }
         let _ = term.clear();
         if !ui_loop(&mut term, &mut app, &ev_rx, &llm_rx, &prompts, &cancel, Some(want)) {
             break;
@@ -461,6 +488,34 @@ fn ui_loop<B: Backend>(
             }
             continue;
         }
+        let sugg = app.suggestions();
+        if !sugg.is_empty() {
+            app.pick = app.pick.min(sugg.len() - 1);
+            match k.code {
+                KeyCode::Up => {
+                    app.pick = (app.pick + sugg.len() - 1) % sugg.len();
+                    continue;
+                }
+                KeyCode::Down => {
+                    app.pick = (app.pick + 1) % sugg.len();
+                    continue;
+                }
+                KeyCode::Esc => {
+                    app.pop_hidden = true;
+                    continue;
+                }
+                KeyCode::Tab | KeyCode::Enter => {
+                    let (line, ready) = complete(&app.input, &sugg[app.pick].0);
+                    app.input = line;
+                    app.edited();
+                    // Tab only completes; Enter completes and runs once nothing is missing
+                    if k.code == KeyCode::Tab || !ready {
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
         match k.code {
             KeyCode::Char('c') | KeyCode::Char('d') if ctrl => {
                 if app.busy {
@@ -488,30 +543,78 @@ fn ui_loop<B: Backend>(
             }
             KeyCode::Backspace => {
                 app.input.pop();
+                app.edited();
             }
             KeyCode::PageUp => app.scroll += 10,
             KeyCode::PageDown => app.scroll = app.scroll.saturating_sub(10),
             KeyCode::End => app.scroll = 0,
-            KeyCode::Char(c) if !ctrl => app.input.push(c),
+            KeyCode::Char(c) if !ctrl => {
+                app.input.push(c);
+                app.edited();
+            }
             _ => {}
         }
     }
 }
 
-const HELP: &str = "console commands (they work even with the brain down):
-  /config              show settings
-  /set <key> <value>   change a setting (e.g. /set ctx 65536, /set keymap it, /set ui_font 24)
-  /keymaps             list keyboard layouts
-  /reset               factory settings
-  /restart <module>    restart a module (e.g. /restart llm)
-  /new                 new conversation (clears the context)
-  /safe                safe mode on/off: ignore /data/modules and config
-  /help                this help";
+/// Console commands: (name, arguments, what it does). /help and the "/" completion popup both come from here.
+const COMMANDS: [(&str, &str, &str); 8] = [
+    ("/help", "", "this help"),
+    ("/config", "", "show settings"),
+    ("/set", "<key> <value>", "change a setting (e.g. /set keymap it, /set ui_font 24)"),
+    ("/keymaps", "", "list keyboard layouts"),
+    ("/restart", "<module>", "restart a module (e.g. /restart llm)"),
+    ("/new", "", "new conversation (clears the context)"),
+    ("/safe", "", "safe mode on/off: ignore /data/modules and config"),
+    ("/reset", "", "factory settings"),
+];
+
+fn help() -> String {
+    let rows: String = COMMANDS.iter().map(|(c, a, d)| format!("\n  {:<21}{d}", format!("{c} {a}"))).collect();
+    format!("console commands (they work even with the brain down; type / for suggestions):{rows}")
+}
+
+/// What the "/" popup offers for the input so far: (replacement for the last word, description).
+fn completions(input: &str, modules: &[(String, String, String)]) -> Vec<(String, String)> {
+    let words: Vec<&str> = input.split(' ').collect();
+    let pre = |c: &str| c.starts_with(words[words.len() - 1]);
+    let own = |v: Vec<(&str, &str)>| v.into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    match words[..] {
+        [_] if input.starts_with('/') => own(COMMANDS.iter().filter(|c| pre(c.0)).map(|(c, a, d)| (*c, if a.is_empty() { *d } else { *a })).collect()),
+        ["/set", _] => {
+            let mut v: Vec<(&str, &str)> = config::KEYS.iter().filter(|k| pre(k.name)).map(|k| (k.name, k.help)).collect();
+            v.sort();
+            own(v)
+        }
+        ["/set", "keymap", _] => {
+            crate::keyboard::index().lines().filter_map(|l| l.split_once('\t')).filter(|(n, _)| pre(n)).map(|(n, d)| (n.into(), d.into())).collect()
+        }
+        ["/set", key, _] => config::key(key).map_or(vec![], |k| {
+            own(k.allowed.iter().filter(|v| **v != "*" && pre(v)).map(|v| (*v, if *v == k.default { "default" } else { "" })).collect())
+        }),
+        ["/restart", _] => modules.iter().filter(|m| pre(&m.0)).map(|m| (m.0.clone(), format!("pid {}", m.1))).collect(),
+        _ => vec![],
+    }
+}
+
+/// `input` with its last word replaced by `pick`; true when the line is then ready to run
+/// (false: it still needs an argument, and a space is added for it).
+fn complete(input: &str, pick: &str) -> (String, bool) {
+    let base = input.rsplit_once(' ').map_or("", |(b, _)| b);
+    let line = if base.is_empty() { pick.to_string() } else { format!("{base} {pick}") };
+    let words = line.split(' ').count();
+    let more = match words {
+        1 => COMMANDS.iter().any(|(c, a, _)| *c == pick && !a.is_empty()),
+        2 => line.starts_with("/set "),
+        _ => false,
+    };
+    if more { (line + " ", false) } else { (line, true) }
+}
 
 fn command(line: &str, prompts: &Sender<Cmd>, busy: bool) -> String {
     let mut p = line.trim().splitn(3, ' ');
     let res = match (p.next().unwrap_or(""), p.next(), p.next()) {
-        ("/help", ..) => Ok(HELP.into()),
+        ("/help", ..) => Ok(help()),
         ("/config", ..) => Ok(config::describe()),
         ("/set", Some(k), Some(v)) => agent::set_config(k, v, "owner"),
         ("/reset", ..) => config::reset()
@@ -575,6 +678,22 @@ fn file_name(path: &str) -> String {
     real.rsplit('/').next().unwrap_or("?").trim_end_matches(".gguf").into()
 }
 
+/// "eth0 10.0.2.15/24" per configured interface, from the DHCP client's state files.
+fn ips() -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir("/run/aios")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            let ifc = n.strip_prefix("ip.")?.to_string();
+            Some(format!("{ifc} {}", fs::read_to_string(e.path()).ok()?.trim()))
+        })
+        .collect();
+    v.sort();
+    v
+}
+
 fn read_sys(s: &mut Sys) {
     // CPU: busy share of jiffies since last sample
     if let Some(l) = fs::read_to_string("/proc/stat").ok().and_then(|t| t.lines().next().map(String::from)) {
@@ -597,17 +716,7 @@ fn read_sys(s: &mut Sys) {
     s.mem_used = s.mem_total.saturating_sub(kb("MemAvailable:"));
     s.load = fs::read_to_string("/proc/loadavg").unwrap_or_default().split_whitespace().take(3).collect::<Vec<_>>().join(" ");
     s.uptime = fs::read_to_string("/proc/uptime").ok().and_then(|u| u.split('.').next()?.parse().ok()).unwrap_or(0);
-    s.ips = fs::read_dir("/run/aios")
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let n = e.file_name().to_string_lossy().into_owned();
-            let ifc = n.strip_prefix("ip.")?.to_string();
-            Some(format!("{ifc} {}", fs::read_to_string(e.path()).ok()?.trim()))
-        })
-        .collect();
-    s.ips.sort();
+    s.ips = ips();
     s.modules = fs::read_to_string("/run/aios/modules")
         .unwrap_or_default()
         .lines()
@@ -661,6 +770,7 @@ fn draw(f: &mut Frame, a: &App) {
     draw_header(f, head, a);
     draw_flow(f, flow, a);
     draw_input(f, input, a);
+    draw_popup(f, input, a);
     if side_w > 0 {
         draw_side(f, side, a);
     }
@@ -701,7 +811,7 @@ fn draw_footer(f: &mut Frame, area: Rect, a: &App) {
     } else if a.busy {
         "Esc cancel  ·  PgUp/PgDn scroll"
     } else {
-        "Enter send  ·  PgUp/PgDn scroll  ·  End latest  ·  /help commands"
+        "Enter send  ·  PgUp/PgDn scroll  ·  End latest  ·  / commands"
     };
     let km = a.conf.get("keymap").map_or("?", String::as_str);
     let right = format!("{}{km}  ·  {}  ", icon(Icon::Keyboard), a.font);
@@ -912,6 +1022,46 @@ fn draw_input(f: &mut Frame, area: Rect, a: &App) {
     f.render_widget(Paragraph::new(line).block(blk), area);
 }
 
+/// The "/" completions, floating above the input box: Up/Down to choose, Tab to complete, Enter to run.
+fn draw_popup(f: &mut Frame, input: Rect, a: &App) {
+    let sugg = a.suggestions();
+    if sugg.is_empty() {
+        return;
+    }
+    const ROWS: usize = 8;
+    let rows = sugg.len().min(ROWS);
+    let top = a.pick.saturating_sub(ROWS - 1);
+    let name_w = sugg.iter().map(|s| s.0.chars().count()).max().unwrap_or(0).max(8);
+    let w = input.width.min(78);
+    let h = rows as u16 + 2;
+    let area = Rect { x: input.x, y: input.y.saturating_sub(h), width: w, height: h.min(input.y) };
+    let more = if sugg.len() > ROWS { format!(" {}/{} ", a.pick + 1, sugg.len()) } else { String::new() };
+    let blk = Block::bordered()
+        .border_type(border())
+        .border_style(fg(BORDER))
+        .style(Style::new().bg(SURFACE))
+        .title(Line::from(Span::styled(format!(" {} Tab complete · Enter run · Esc close ", g("↑↓", "up/down")), fg(FAINT))))
+        .title_bottom(Line::from(Span::styled(more, fg(FAINT))).right_aligned());
+    let lines: Vec<Line> = sugg
+        .iter()
+        .enumerate()
+        .skip(top)
+        .take(ROWS)
+        .map(|(i, (c, d))| {
+            let sel = i == a.pick;
+            let bg = if sel { BORDER } else { SURFACE };
+            let room = (w as usize).saturating_sub(name_w + 6);
+            Line::from(vec![
+                Span::styled(format!(" {} ", if sel { g("❯", ">") } else { " " }), fg(ACCENT).bg(bg)),
+                Span::styled(format!("{c:<name_w$}  "), if sel { fg(STRONG).bg(bg).add_modifier(Modifier::BOLD) } else { fg(TEXT).bg(bg) }),
+                Span::styled(format!("{:<room$}", trunc(d, room)), fg(if sel { MUTED } else { FAINT }).bg(bg)),
+            ])
+        })
+        .collect();
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(Paragraph::new(lines).block(blk), area);
+}
+
 fn kv(k: &str, v: String, c: Color) -> Line<'static> {
     Line::from(vec![Span::styled(format!("{k:<7}"), fg(FAINT)), Span::styled(v, fg(c))])
 }
@@ -1010,6 +1160,25 @@ mod tests {
     use crate::judge::Row;
     use ratatui::backend::TestBackend;
 
+    #[test]
+    fn slash_completion() {
+        let names = |v: Vec<(String, String)>| v.into_iter().map(|x| x.0).collect::<Vec<_>>();
+        let mods = vec![("judge".into(), "79".into(), "0".into()), ("llm".into(), "81".into(), "0".into())];
+        assert_eq!(completions("/", &mods).len(), COMMANDS.len());
+        assert_eq!(names(completions("/re", &mods)), ["/restart", "/reset"]);
+        assert_eq!(names(completions("/set ke", &mods)), ["keymap"]);
+        assert_eq!(names(completions("/set k", &mods)), ["keymap", "kv_cache"]);
+        assert_eq!(names(completions("/set ui_font 2", &mods)), ["24"]);
+        assert_eq!(names(completions("/set kv_cache ", &mods)), ["f16", "q8_0"]);
+        assert_eq!(names(completions("/restart l", &mods)), ["llm"]);
+        assert!(completions("hello /", &mods).is_empty() && completions("/set ctx 3", &mods).is_empty() && completions("/help x", &mods).is_empty());
+        assert_eq!(complete("/se", "/set"), ("/set ".into(), false));
+        assert_eq!(complete("/he", "/help"), ("/help".into(), true));
+        assert_eq!(complete("/set kv", "kv_cache"), ("/set kv_cache ".into(), false));
+        assert_eq!(complete("/set kv_cache q", "q8_0"), ("/set kv_cache q8_0".into(), true));
+        assert_eq!(complete("/restart ", "llm"), ("/restart llm".into(), true));
+    }
+
     fn demo() -> App {
         let report = |kind, subject: &str, rows: Vec<Row>, score, allowed, verdict: &str| {
             Entry::Judge(Report { kind, subject: subject.into(), rows, score, allowed, verdict: verdict.into(), secs: 7.8 })
@@ -1089,6 +1258,8 @@ mod tests {
             tick: 3,
             font: "font 10x19".into(),
             warm: Some(true),
+            pick: 0,
+            pop_hidden: false,
         }
     }
 

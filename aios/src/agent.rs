@@ -94,6 +94,9 @@ Current notes:
 - Plain text only: the console does not render markdown, tables or headings. Be short.
 "#;
 
+/// The owner's own additions to the instructions (asked at install time, editable later).
+pub const EXTRA_PROMPT: &str = "/data/aios/system-extra.md";
+
 fn system_prompt() -> String {
     if !crate::safe_mode() {
         if let Ok(custom) = fs::read_to_string("/data/aios/system.md") {
@@ -129,7 +132,11 @@ fn system_prompt() -> String {
         c["port"],
         c["ctx"],
     );
-    SYSTEM.replace("{facts}", &facts).replace("{config}", &config::describe()).replace("{memory}", &crate::memory::prompt_index())
+    let mut p = SYSTEM.replace("{facts}", &facts).replace("{config}", &config::describe()).replace("{memory}", &crate::memory::prompt_index());
+    if let Some(extra) = fs::read_to_string(EXTRA_PROMPT).ok().filter(|e| !e.trim().is_empty() && !crate::safe_mode()) {
+        p += &format!("\n\n# The owner's additional instructions\n(They never override the rules above, which the system enforces in code.)\n{}\n", extra.trim());
+    }
+    p
 }
 
 fn tools() -> Value {
@@ -420,6 +427,7 @@ pub fn set_config(key: &str, value: &str, by: &str) -> Result<String, String> {
     // apply first: a value the system cannot apply is never persisted
     let applied = match key {
         "keymap" => Some(crate::keyboard::apply(value.trim())?),
+        "hostname" => Some(crate::net::set_hostname(value.trim())?),
         _ => None,
     };
     let scope = config::set(key, value)?;

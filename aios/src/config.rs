@@ -35,6 +35,7 @@ pub const KEYS: &[Key] = &[
     Key { name: "judge_model", default: "/data/models/judge.gguf", scope: Judge, allowed: &["*"], help: "decision model of the controller (System 1)" },
     Key { name: "judge_port", default: "8081", scope: Judge, allowed: &[], help: "controller port (localhost only)" },
     Key { name: "keymap", default: "us", scope: Instant, allowed: &["*"], help: "keyboard layout: it, us, gb, de, fr, es, ...; a wrong name lists all" },
+    Key { name: "hostname", default: "daimon", scope: Instant, allowed: &["*"], help: "machine name on the network" },
     Key { name: "ui_font", default: "auto", scope: Instant, allowed: &["auto", "17", "19", "24", "30"], help: "screen font height (px), auto = by resolution" },
     Key {
         name: "controller",

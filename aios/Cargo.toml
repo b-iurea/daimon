@@ -1,14 +1,15 @@
 [package]
 name = "aios"
-version = "0.1.0"
+version = "0.2.0"
 license = "GPL-3.0-or-later"
 edition = "2024"
 
 [dependencies]
 libc = "0.2.190"
 ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info"] }
+ring = "0.17"
 serde_json = "1.0.151"
-ureq = { version = "2", default-features = false }
+ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [profile.release]
 opt-level = "z"

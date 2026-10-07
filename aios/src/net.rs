@@ -35,6 +35,21 @@ pub fn up(args: &HashMap<String, String>) {
     }
 }
 
+/// Machine name on the network: letters, digits and '-', 1..63 chars (RFC 1123). Applied to the kernel at once.
+pub fn valid_hostname(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 63 && !name.starts_with('-') && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+pub fn set_hostname(name: &str) -> Result<String, String> {
+    if !valid_hostname(name) {
+        return Err("hostname: 1-63 letters, digits or '-', not starting with '-'".into());
+    }
+    if unsafe { libc::sethostname(name.as_ptr().cast(), name.len()) } != 0 {
+        return Err(format!("sethostname: {}", std::io::Error::last_os_error()));
+    }
+    Ok(format!("machine name {name} (sent to DHCP from the next lease)"))
+}
+
 fn ifaces() -> Vec<String> {
     let Ok(rd) = fs::read_dir("/sys/class/net") else {
         return vec![];
@@ -155,8 +170,9 @@ fn packet(xid: u32, mac: &[u8], kind: u8, extra: &[(u8, Vec<u8>)]) -> Vec<u8> {
     p[236..240].copy_from_slice(&[99, 130, 83, 99]);
     p.extend([53, 1, kind]);
     p.extend([55, 4, 1, 3, 6, 51]); // ask for mask, router, dns, lease time
-    p.extend([12, 6]);
-    p.extend(b"daimon");
+    let host = crate::config::get("hostname");
+    p.extend([12, host.len() as u8]);
+    p.extend(host.as_bytes());
     for (code, v) in extra {
         p.push(*code);
         p.push(v.len() as u8);

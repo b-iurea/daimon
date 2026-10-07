@@ -1,6 +1,7 @@
 mod agent;
 mod config;
 mod fb;
+mod install;
 mod judge;
 mod keyboard;
 mod memory;
@@ -107,6 +108,9 @@ fn init() -> ! {
     match keyboard::apply(&config::get("keymap")) {
         Ok(m) => log(&m),
         Err(e) => log(&format!("keyboard: {e}")),
+    }
+    if let Err(e) = net::set_hostname(&config::get("hostname")) {
+        log(&e);
     }
     net::up(&args);
     // Ctrl+Alt+Del no longer reboots: the kernel sends us SIGINT and we restart the console (see supervise)

@@ -5,7 +5,7 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 
 ## Principles
 - **Minimal weight**: no shell, no package manager, no systemd. The OS (kernel + init + agent + TUI + llama-server) is
-  **24 MB** in a single EFI file (fonts + keymaps included); `aios` itself is 1.5 MB.
+  **25 MB** in a single EFI file (fonts, keymaps and mke2fs included); `aios` itself is 2.6 MB (1 MB of it TLS).
 - **Modular**: every component is a supervised module; none is a hard dependency for the others.
 - **The model is the system**: it can change everything on its own machine (and only there) through tools.
 - **Resilience**: everything restartable, safe mode, validated settings, rollback (future phase).
@@ -28,20 +28,19 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 
 ## Roadmap — 0.x "Deucalion"
 
-Every step is a minor version; the whole 0.x line is Deucalion. Order can change; 1.0 "Talos" comes when Daimon can
-be installed on real hardware, update itself safely and run unattended.
+Every step is a minor version; the whole 0.x line is Deucalion. Order can change; 1.0 "Talos" comes when Daimon
+installs on real hardware, updates itself safely and runs unattended.
 
 | Version | Theme | Status |
 |---|---|---|
 | **0.1.0** | Foundation: boot, agent, console, memory, controller, splash | ✅ released 2026-10-07 (`v0.1.0`) |
-| **0.2.0** | Resilient console: watchdog, Ctrl+Alt+Del, system changes in memory | ✅ done, to tag |
+| **0.2.0** | Installable: ISO installer, model download, resilient console, system changes in memory, `/` completion | ✅ done, to tag |
 | **0.3.0** | The agent as a service, the console as a window | planned |
 | **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
 | **0.5.0** | Controller hardening | planned |
 | **0.6.0** | Autonomy: the system looks after itself | planned |
-| **0.7.0** | First boot: hardware detection, model download | planned |
-| **0.8.0** | Bare-metal installer | planned |
-| **0.9.0** | Signed A/B updates with rollback | planned |
+| **0.7.0** | Skills, installable from GitHub | planned |
+| **0.8.0** | Signed A/B updates with rollback | planned |
 | **1.0.0** | **Talos** | — |
 
 Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now (paused).
@@ -58,7 +57,7 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 ### 0.4.0 — Daimon on the LAN
 - Today `:8080` is the bare brain: no tools, no memory, no controller. Expose **the agent** instead, OpenAI-compatible
   (`/v1/chat/completions`), so a laptop or phone talks to *the system*, with every rule and controller check.
-- Owner authentication (token generated at first boot, shown on the console), LAN only.
+- Owner authentication (token generated at install, shown on the console), LAN only.
 - The bare llama-server goes back to `127.0.0.1` (optional setting to expose it).
 
 ### 0.5.0 — Controller hardening
@@ -72,20 +71,51 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 - Same rules as a request from the owner: the controller judges every action; what needs the owner waits for them
   and is shown on every window.
 
-### 0.7.0 — First boot
-- Hardware detection and model download from Hugging Face, chosen by CPU/GPU/RAM (the image keeps a default brain +
-  controller so it works offline).
+### 0.7.0 — Skills
+- Define what a skill is in Daimon (instructions + optional files, a manifest), how the agent loads it, what it may do.
+- Install from a GitHub repository (at install time or later, by asking the agent). A skill is downloaded text that
+  enters the prompt: an injection vector, so the controller vets it before it is enabled, and the owner confirms.
 
-### 0.8.0 — Bare-metal installer
-- Install from a USB stick to a disk, data-partition resize.
-
-### 0.9.0 — Signed A/B updates
+### 0.8.0 — Signed A/B updates
 - Signed A/B updates of the OS, the inference engine and skills, with automatic rollback when the new version does not
   come up.
 
 ## Done
 
-### 0.2.0 — Resilient console
+### 0.2.0 — Installable
+
+#### ✅ Installer ISO and first-boot setup (2026-10-08)
+- `./build.sh iso` → `out/daimon-<version>.iso`, **67 MB**, no models: UEFI, El Torito plus a GPT entry
+  (`-isohybrid-gpt-basdat`) so the same file boots as a CD or `dd`'d to a USB stick. Its boot image `efiboot.img` is
+  the ESP itself (FAT, the kernel as `EFI/BOOT/BOOTX64.EFI`). Release asset: the ISO only (GitHub's 2 GB limit).
+- The `tui` runs the wizard (`aios/src/setup.rs`) whenever `/data/models/current.gguf` or `judge.gguf` is missing:
+  - **booted from the ISO** (no `aios-data` partition): keyboard (applied at once), target disk, owner's name,
+    machine name, brain, controller, extra instructions, summary; typing `erase` confirms. Then
+    (`aios/src/install.rs`): GPT written in Rust (protective MBR, both headers, CRC32; checked against `sfdisk` in a
+    test), `efiboot.img` copied from the medium to the ESP, `mke2fs` (static e2fsprogs 1.47.2, built by `build.sh`,
+    1.4 MB) for `aios-data`, downloads, settings, memory; Enter reboots into the installed disk.
+  - **data partition without models**: the same questions minus the disk.
+- **Downloads** from Hugging Face over HTTPS (ureq + rustls, +1 MB): controller first, resumable (`Range`, 20
+  retries), SHA-256 checked against the LFS oid the API publishes (ring), progress with MB/s and ETA.
+  `current.gguf` / `judge.gguf` are symlinks to the downloaded files.
+- **Models offered by RAM only** (no benchmark, by the owner's choice): `install::ram_needed` = brain × 1.25 +
+  controller × 1.125 + 1.5 GB, from the real file sizes on Hugging Face. Brains: MiniCPM5 1B / **2B (default)**,
+  Qwen3.5 4B / 9B / 27B / 35B-A3B, or any GGUF given as `owner/repo/file.gguf` or link. Controller: **Kev 4B**, or
+  Kev 0.8B when the RAM doesn't fit both.
+- New setting `hostname` (default `daimon`): kernel hostname at boot and when set, DHCP option 12.
+- `/data/aios/system-extra.md`: the owner's additions, appended to the system prompt under the code-enforced rules.
+- The owner's name becomes an `owner` note ("The owner wants the agent to call them …"), written by code.
+- Dev loop unchanged: `./build.sh` / `./build.sh run` still build the image with the models from `build/data`
+  (no wizard). `./build.sh run-iso` installs the fresh ISO in QEMU onto a blank 32 GB disk.
+- Verified in QEMU: full install (MiniCPM5 1B + Kev 0.8B, 1.4 GB at ~7 MB/s, both checksums OK), reboot from the
+  disk, 4 notes in memory, console up with the chosen models.
+
+#### ✅ `/` completion in the console (2026-10-08)
+- Typing `/` opens a popup above the input: commands with their arguments, then `/set` keys (sorted) with their
+  help, then the allowed values (`kv_cache`, `ui_font`, `controller`, … and all 59 keymaps), `/restart` modules.
+  ↑↓ choose, Tab completes, Enter completes and runs once nothing is missing, Esc closes.
+  One table (`COMMANDS`) feeds both `/help` and the popup.
+
 
 #### ✅ Console that can't stay frozen (2026-10-07)
 - Supervisor **watchdog**: a module with a `watchdog` file (seconds) must call `heartbeat()` (touches
@@ -230,6 +260,9 @@ bench when adding cases or switching model.
 - Verified in QEMU (1280x800): `docs/boot.gif`.
 
 ## Known limits
+- Installer: UEFI only (no legacy BIOS), Secure Boot off, uses the whole disk (no dual boot). The ISO's ESP is a
+  64 MB FAT image, mostly empty (room for A/B kernels later).
+- The RAM rule for models is a rule of thumb from file sizes; a big context on a big model can still run out.
 - Until 0.3.0, agent and TUI share one process: a console restart starts a new conversation; a pending confirmation blocks the agent until answered.
 - Context tokens estimated as chars/3; the memory index is injected whole into the prompt.
 - DHCP renewal = full DORA at half lease. Module logs are not rotated (tmpfs).
