@@ -18,7 +18,7 @@ strip -o "$OUT/llama-server" build/llama.cpp/build-cpu/bin/llama-server
 [ "$OUT/fonts/.done" -nt tools/mkfont.py ] || { python3 tools/mkfont.py "$OUT/fonts" && touch "$OUT/fonts/.done"; }
 [ "$OUT/logo.alf" -nt tools/mklogo.py ] || python3 tools/mklogo.py "$OUT/logo.alf"
 
-mod() { # mod <name> <cmd> [tty]
+mod() { # mod <name> <cmd> [tty] [watchdog seconds]
   mkdir -p "$OUT/rootfs/$1"
   echo "$2" > "$OUT/rootfs/$1/cmd"
   echo "dir /etc/aios/modules/$1 0755 0 0"
@@ -26,6 +26,10 @@ mod() { # mod <name> <cmd> [tty]
   if [ -n "${3:-}" ]; then
     echo "$3" > "$OUT/rootfs/$1/tty"
     echo "file /etc/aios/modules/$1/tty $OUT/rootfs/$1/tty 0644 0 0"
+  fi
+  if [ -n "${4:-}" ]; then
+    echo "$4" > "$OUT/rootfs/$1/watchdog"
+    echo "file /etc/aios/modules/$1/watchdog $OUT/rootfs/$1/watchdog 0644 0 0"
   fi
 }
 {
@@ -55,7 +59,7 @@ EOF
   for f in "$OUT"/fonts/*.fnt; do echo "file /usr/share/aios/fonts/${f##*/} $f 0644 0 0"; done
   mod llm "/usr/bin/aios llm"
   mod judge "/usr/bin/aios judge"
-  mod tui "/usr/bin/aios tui" tty1
+  mod tui "/usr/bin/aios tui" tty1 10
 } > "$OUT/initramfs.list"
 
 # --- kernel (relinks in seconds when only the initramfs changed)

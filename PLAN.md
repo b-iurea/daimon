@@ -149,6 +149,22 @@ bench when adding cases or switching model.
 - Kernel cmdline `vt.global_cursor_default=0`: no blinking cursor between firmware and splash.
 - Verified in QEMU (1280x800): `docs/boot.gif`.
 
+### ✅ Console that can't stay frozen (2026-10-07)
+- Supervisor **watchdog**: a module with a `watchdog` file (seconds) must call `heartbeat()` (touches
+  `/run/aios/alive.<name>`) at least that often or it is killed and restarted. The `tui` has 10 s and beats every second
+  from the UI loop and the splash.
+- **Ctrl+Alt+Del restarts the console** instead of rebooting: PID 1 sets `RB_DISABLE_CAD`, the kernel turns the key
+  into SIGINT for PID 1, which kills every tty module (the keyboard driver handles it, so it works however frozen the
+  console is). Verified in QEMU. A restarted console starts a new conversation; what matters is in memory.
+
+### ✅ System changes recorded in memory (2026-10-07)
+- Written by code, not by the model, so they skip the controller and can't be forgotten:
+  - `system/wiki/setting-<key>.md`: "This system: <key> is <value> (since <date>, set by the owner|agent)" + the
+    last 20 changes (old -> new, by whom). From `/set` and the `config_set` tool (one funnel: `agent::set_config`).
+  - `system/wiki/changes-to-this-system.md`: last 100 changes, newest first: settings, files written, commands run,
+    reboots/power-off, factory reset.
+- The prompt tells the agent not to duplicate them and to save only the *why*.
+
 ## Next steps
 1. Grow the bench (more owner phrasings, more disguised attacks) and re-check thresholds; consider fine-tuning Kev-4B (or Kev-0.8B for small machines)
    on our own cases (`kev.train --init_from jaredpalmer/kev-0.8b`).
@@ -161,7 +177,8 @@ bench when adding cases or switching model.
 - GPU drivers: NVIDIA (CUDA) and AMD (Vulkan/RADV). CPU only for now.
 
 ## Known limits
-- Agent and TUI share one process; a pending confirmation blocks the agent until answered.
+- Agent and TUI share one process: a console restart starts a new conversation; a pending confirmation blocks the agent until answered.
+- `run` is logged in the changelog even when read-only.
 - Context tokens estimated as chars/3; the memory index is injected whole into the prompt.
 - DHCP renewal = full DORA at half lease. Module logs are not rotated (tmpfs).
 - The thinking budget applies per step; multi-step turns can still reason at length.

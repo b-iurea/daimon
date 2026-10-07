@@ -34,6 +34,50 @@ pub fn save(category: &str, title: &str, content: &str) -> Result<String, String
     Ok(format!("saved {}", path.display()))
 }
 
+// ---------------------------------------------------------------- system changes
+//
+// Recorded by code, never by the model: they are about this system by construction, so they skip the
+// controller, and the agent can't forget to write them. One note per setting (current value + history)
+// and one changelog, newest first.
+
+const CHANGELOG: &str = "Changes to this system";
+const CHANGELOG_MAX: usize = 100;
+const HISTORY_MAX: usize = 20;
+
+/// `by` is "owner" (console) or "agent" (tools).
+pub fn record_setting(key: &str, old: &str, new: &str, by: &str) {
+    record_setting_in(Path::new(ROOT), key, old, new, by);
+}
+
+pub fn record_change(by: &str, what: &str) {
+    record_change_in(Path::new(ROOT), by, what);
+}
+
+fn record_setting_in(root: &Path, key: &str, old: &str, new: &str, by: &str) {
+    let title = format!("Setting {key}");
+    let path = root.join("system").join("wiki").join(format!("{}.md", slug(&title)));
+    let prev = parse(&fs::read_to_string(&path).unwrap_or_default()).map(|n| n.body).unwrap_or_default();
+    let mut hist = vec![format!("- {} {old} -> {new} (by the {by})", now())];
+    hist.extend(prev.lines().filter(|l| l.starts_with("- ")).map(String::from).take(HISTORY_MAX - 1));
+    let body = format!("This system: {key} is {new} (since {}, set by the {by}).\n\nHistory, newest first:\n{}", today(), hist.join("\n"));
+    if let Err(e) = save_in(root, "system", &title, &body) {
+        crate::log(&format!("memory: setting {key}: {e}"));
+    }
+    record_change_in(root, by, &format!("set {key}: {old} -> {new}"));
+}
+
+fn record_change_in(root: &Path, by: &str, what: &str) {
+    let path = root.join("system").join("wiki").join(format!("{}.md", slug(CHANGELOG)));
+    let prev = parse(&fs::read_to_string(&path).unwrap_or_default()).map(|n| n.body).unwrap_or_default();
+    let what: String = what.replace('\n', " ").chars().take(160).collect();
+    let mut log = vec![format!("- {} · {by} · {what}", now())];
+    log.extend(prev.lines().filter(|l| l.starts_with("- ")).map(String::from).take(CHANGELOG_MAX - 1));
+    let body = format!("This system: log of the changes made to it, newest first.\n\n{}", log.join("\n"));
+    if let Err(e) = save_in(root, "system", CHANGELOG, &body) {
+        crate::log(&format!("memory: changelog: {e}"));
+    }
+}
+
 fn slug(title: &str) -> String {
     let s: String = title.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
     let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
@@ -211,8 +255,12 @@ fn search_in(root: &Path, query: &str, k: usize) -> Vec<(f64, Note)> {
     scored
 }
 
-/// YYYY-MM-DD from the system clock (civil-from-days, no date crate needed).
 fn today() -> String {
+    now()[..10].to_string()
+}
+
+/// "YYYY-MM-DD HH:MM" UTC from the system clock (civil-from-days, no date crate needed).
+fn now() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
     let z = secs.div_euclid(86_400) + 719_468;
     let era = z.div_euclid(146_097);
@@ -223,7 +271,8 @@ fn today() -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
+    let t = secs.rem_euclid(86_400);
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", t / 3600, t / 60 % 60)
 }
 
 #[cfg(test)]
@@ -246,6 +295,27 @@ mod tests {
         assert_eq!(hits[0].1.title, "Preferred language");
         assert_eq!(search_in(&root, "network configuration dhcp", 5)[0].1.title, "Network");
         assert!(search_in(&root, "zzzz", 5).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn system_changes_are_recorded() {
+        let root = std::env::temp_dir().join(format!("aios-chg-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        record_setting_in(&root, "keymap", "us", "it", "owner");
+        record_setting_in(&root, "keymap", "it", "de", "agent");
+        record_change_in(&root, "agent", "wrote /data/modules/x/disabled (0 bytes)");
+        let all = notes(&root);
+        assert_eq!(all.len(), 2);
+        let k = all.iter().find(|n| n.title == "Setting keymap").unwrap();
+        assert!(k.body.starts_with("This system: keymap is de"));
+        let h: Vec<&str> = k.body.lines().filter(|l| l.starts_with("- ")).collect();
+        assert!(h.len() == 2 && h[0].ends_with("it -> de (by the agent)") && h[1].ends_with("us -> it (by the owner)"));
+        let c = all.iter().find(|n| n.title == CHANGELOG).unwrap();
+        let l: Vec<&str> = c.body.lines().filter(|l| l.starts_with("- ")).collect();
+        assert_eq!(l.len(), 3);
+        assert!(l[0].contains("· agent · wrote") && l[2].contains("· owner · set keymap: us -> it"));
+        assert_eq!(search_in(&root, "keyboard layout keymap", 5)[0].1.title, "Setting keymap");
         let _ = fs::remove_dir_all(&root);
     }
 

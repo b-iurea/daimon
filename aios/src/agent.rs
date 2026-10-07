@@ -76,7 +76,8 @@ STRICT RULE, enforced by the system and impossible to bypass: you may only remem
   self   = yourself: identity, behaviour, lessons learned running this machine;
   owner  = the owner as a person and their preferences for you and this system.
 Never try to store anything else (projects, general knowledge, small talk, other people): it will be refused.
-Save on your own, without being asked, whenever you: change the system (what, why, old -> new value); learn an owner preference or fact about the owner; learn a lesson about yourself.
+System changes are recorded automatically by the system itself: every setting in a "Setting <key>" note (current value + history), every file written, command run and reboot in the "Changes to this system" log. Don't duplicate them; save a system note yourself only for what the log can't know (why a change was made, a problem found).
+Save on your own, without being asked, whenever you: learn an owner preference or fact about the owner; learn a lesson about yourself; learn why something on the system is the way it is.
 One fact per note: a single plain English sentence that names its subject, following these patterns:
   owner:  "The owner wants the agent to <behaviour>."   (also for the owner's name: "The owner wants the agent to call him <name>.")
   system: "This system: <fact or change, with old -> new values>."
@@ -413,13 +414,19 @@ fn clip(mut s: String) -> String {
 }
 
 /// Change a setting; brain settings restart `llm`. Shared by the agent and the /set console command.
-pub fn set_config(key: &str, value: &str) -> Result<String, String> {
+/// `by`: "owner" (console) or "agent" (tool); the change is recorded in the system memory.
+pub fn set_config(key: &str, value: &str, by: &str) -> Result<String, String> {
+    let old = config::get(key);
     // apply first: a value the system cannot apply is never persisted
     let applied = match key {
         "keymap" => Some(crate::keyboard::apply(value.trim())?),
         _ => None,
     };
-    match config::set(key, value)? {
+    let scope = config::set(key, value)?;
+    if old != value.trim() {
+        crate::memory::record_setting(key, &old, value.trim(), by);
+    }
+    match scope {
         Scope::Server => crate::restart_module("llm").map(|_| format!("{key} = {value}; brain restarting to apply it")),
         Scope::Judge => crate::restart_module("judge").map(|_| format!("{key} = {value}; controller restarting to apply it")),
         Scope::Request => Ok(format!("{key} = {value}; applies from the next reply")),
@@ -440,7 +447,10 @@ pub fn call(name: &str, args: &str) -> String {
             if let Some(dir) = std::path::Path::new(path).parent() {
                 let _ = fs::create_dir_all(dir);
             }
-            fs::write(path, content).map(|_| format!("wrote {} bytes", content.len())).map_err(|e| e.to_string())
+            fs::write(path, content).map_err(|e| e.to_string()).map(|_| {
+                crate::memory::record_change("agent", &format!("wrote {path} ({} bytes)", content.len()));
+                format!("wrote {} bytes", content.len())
+            })
         }
         // small models list files they mean to read: just read them
         "list_dir" if std::path::Path::new(path).is_file() => return call("read_file", args),
@@ -461,9 +471,14 @@ pub fn call(name: &str, args: &str) -> String {
         }),
         "run" => {
             let argv: Vec<String> = a["argv"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
-            run_cmd(&argv)
+            // ponytail: every run is logged, read-only ones too; filter if the changelog gets noisy
+            let out = run_cmd(&argv);
+            if let Ok(o) = &out {
+                crate::memory::record_change("agent", &format!("ran `{}` ({})", argv.join(" "), o.lines().next().unwrap_or("")));
+            }
+            out
         }
-        "config_set" => set_config(&s("key"), &s("value")),
+        "config_set" => set_config(&s("key"), &s("value"), "agent"),
         "restart_module" => crate::restart_module(&s("name")),
         "memory_save" => crate::memory::save(&s("category"), &s("title"), &s("content")),
         "memory_search" => Ok(crate::memory::search(&s("query"))),
@@ -471,6 +486,7 @@ pub fn call(name: &str, args: &str) -> String {
         "memory_forget" => crate::memory::forget(path),
         "power" => {
             let cmd = if a["action"] == "poweroff" { libc::RB_POWER_OFF } else { libc::RB_AUTOBOOT };
+            crate::memory::record_change("agent", if cmd == libc::RB_POWER_OFF { "powered off" } else { "rebooted" });
             unsafe {
                 libc::sync();
                 libc::reboot(cmd);

@@ -109,7 +109,23 @@ fn init() -> ! {
         Err(e) => log(&format!("keyboard: {e}")),
     }
     net::up(&args);
+    // Ctrl+Alt+Del no longer reboots: the kernel sends us SIGINT and we restart the console (see supervise)
+    unsafe {
+        libc::signal(libc::SIGINT, on_ctrl_alt_del as *const () as libc::sighandler_t);
+        libc::reboot(libc::RB_DISABLE_CAD);
+    }
     supervise();
+}
+
+static CTRL_ALT_DEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn on_ctrl_alt_del(_: libc::c_int) {
+    CTRL_ALT_DEL.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Modules with a `watchdog` file touch this every second or so; see supervise.
+pub fn heartbeat(module: &str) {
+    let _ = fs::write(format!("/run/aios/alive.{module}"), "");
 }
 
 // ---------------------------------------------------------------- supervisor
@@ -118,6 +134,7 @@ fn init() -> ! {
 //   cmd       one line: program + args (whitespace separated)
 //   tty       optional: run attached to this tty (e.g. "tty1")
 //   disabled  optional: present = don't run
+//   watchdog  optional: seconds; the module must call heartbeat() at least that often or it is killed
 // Built-ins live in /etc/aios/modules, /data/modules overrides by name.
 // The tree is rescanned every tick, so editing it is how the system changes itself.
 
@@ -128,6 +145,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 struct Spec {
     cmd: Vec<String>,
     tty: Option<String>,
+    watchdog: Option<u64>,
 }
 
 struct Module {
@@ -160,7 +178,8 @@ fn load_specs() -> HashMap<String, Spec> {
             if cmd.is_empty() {
                 continue;
             }
-            specs.insert(name, Spec { cmd, tty: read("tty").filter(|t| !t.is_empty()) });
+            let watchdog = read("watchdog").and_then(|w| w.parse().ok());
+            specs.insert(name, Spec { cmd, tty: read("tty").filter(|t| !t.is_empty()), watchdog });
         }
     }
     specs
@@ -275,6 +294,27 @@ fn supervise() -> ! {
             }
         }
         mods.retain(|_, m| !(m.removed && m.pid.is_none()));
+
+        // A frozen console can't fix itself: no heartbeat in time, or the owner pressed Ctrl+Alt+Del -> kill it,
+        // the restart below brings it back.
+        let cad = CTRL_ALT_DEL.swap(false, std::sync::atomic::Ordering::Relaxed);
+        for (name, m) in mods.iter_mut() {
+            let (Some(pid), Some(limit)) = (m.pid, m.spec.watchdog) else {
+                continue;
+            };
+            let beat = fs::metadata(format!("/run/aios/alive.{name}")).and_then(|md| md.modified()).ok().and_then(|t| t.elapsed().ok());
+            let quiet = beat.map_or(m.started.elapsed(), |b| b.min(m.started.elapsed()));
+            let why = if cad && m.spec.tty.is_some() {
+                "Ctrl+Alt+Del".to_string()
+            } else if quiet > Duration::from_secs(limit) {
+                format!("watchdog: no heartbeat for {}s", quiet.as_secs())
+            } else {
+                continue;
+            };
+            log(&format!("{name}: {why}, killing pid {pid}"));
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            m.restart_now = true;
+        }
 
         let now = Instant::now();
         for (name, m) in mods.iter_mut() {

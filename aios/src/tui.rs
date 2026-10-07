@@ -352,6 +352,7 @@ fn boot_splash(fb: &mut crate::fb::Fb, app: &mut App, ev_rx: &Receiver<Ev>, llm_
     let mut last_stat = Instant::now() - Duration::from_secs(5);
     loop {
         if last_stat.elapsed() >= Duration::from_secs(1) {
+            crate::heartbeat("tui");
             read_sys(&mut app.sys);
             last_stat = Instant::now();
         }
@@ -416,6 +417,7 @@ fn ui_loop<B: Backend>(
     let mut last_stat = Instant::now() - Duration::from_secs(5);
     loop {
         if last_stat.elapsed() >= Duration::from_secs(1) {
+            crate::heartbeat("tui");
             read_sys(&mut app.sys);
             app.conf = config::load();
             app.memories = crate::memory::count();
@@ -511,11 +513,14 @@ fn command(line: &str, prompts: &Sender<Cmd>, busy: bool) -> String {
     let res = match (p.next().unwrap_or(""), p.next(), p.next()) {
         ("/help", ..) => Ok(HELP.into()),
         ("/config", ..) => Ok(config::describe()),
-        ("/set", Some(k), Some(v)) => agent::set_config(k, v),
+        ("/set", Some(k), Some(v)) => agent::set_config(k, v, "owner"),
         ("/reset", ..) => config::reset()
             .and_then(|_| crate::keyboard::apply(&config::get("keymap")))
             .and_then(|_| crate::restart_module("llm"))
-            .map(|_| "factory settings restored; brain restarting".into()),
+            .map(|_| {
+                crate::memory::record_change("owner", "factory settings restored");
+                "factory settings restored; brain restarting".into()
+            }),
         ("/keymaps", ..) => Ok(crate::keyboard::index()),
         ("/restart", Some(m), _) => crate::restart_module(m),
         ("/new", ..) if busy => Err("cancel the running request first (Esc)".into()),
