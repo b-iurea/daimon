@@ -1,6 +1,6 @@
 [package]
-name = "aios"
-version = "0.2.0"
+name = "daimon"
+version = "0.2.1"
 license = "GPL-3.0-or-later"
 edition = "2024"
 

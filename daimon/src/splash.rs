@@ -8,7 +8,7 @@ use std::time::Instant;
 
 pub const CODENAME: &str = "Deucalion";
 /// built by tools/mklogo.py
-const LOGO: &str = "/usr/share/aios/logo.alf";
+const LOGO: &str = "/usr/share/daimon/logo.alf";
 /// cap height of the master wordmark in LOGO
 const LOGO_CAP: f32 = 160.0;
 

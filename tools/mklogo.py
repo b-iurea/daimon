@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The DAIMON wordmark for the boot splash (aios/src/splash.rs).
+"""The DAIMON wordmark for the boot splash (daimon/src/splash.rs).
 
   python3 tools/mklogo.py <out_file>
 

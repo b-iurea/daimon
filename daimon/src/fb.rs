@@ -11,7 +11,7 @@ use std::fs;
 use std::io;
 use std::os::fd::AsRawFd;
 
-pub const FONT_DIR: &str = "/usr/share/aios/fonts";
+pub const FONT_DIR: &str = "/usr/share/daimon/fonts";
 
 const FBIOGET_VSCREENINFO: libc::Ioctl = 0x4600;
 const FBIOGET_FSCREENINFO: libc::Ioctl = 0x4602;
@@ -399,7 +399,7 @@ mod tests {
         b.extend(('A' as u32).to_le_bytes());
         b.extend(0xFFFDu32.to_le_bytes());
         b.extend([0xF0, 0x0F, 0x11, 0x22, 0xAA, 0xBB, 0xCC, 0xDD]);
-        let p = std::env::temp_dir().join("aios-test.fnt");
+        let p = std::env::temp_dir().join("daimon-test.fnt");
         fs::write(&p, b).unwrap();
         let f = Font::load(p.to_str().unwrap()).unwrap();
         assert_eq!((f.w, f.h), (2, 2));

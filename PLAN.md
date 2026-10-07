@@ -1,11 +1,11 @@
 # Daimon — plan
 
 A minimal x86_64 operating system where the LLM **is** the system. Linux kernel, the whole userspace in Rust
-(one binary, `aios`), llama.cpp as inference engine. Personal project. Standard language: **English**.
+(one binary, `daimon`), llama.cpp as inference engine. Personal project. Standard language: **English**.
 
 ## Principles
 - **Minimal weight**: no shell, no package manager, no systemd. The OS (kernel + init + agent + TUI + llama-server) is
-  **25 MB** in a single EFI file (fonts, keymaps and mke2fs included); `aios` itself is 2.6 MB (1 MB of it TLS).
+  **25 MB** in a single EFI file (fonts, keymaps and mke2fs included); `daimon` itself is 2.6 MB (1 MB of it TLS).
 - **Modular**: every component is a supervised module; none is a hard dependency for the others.
 - **The model is the system**: it can change everything on its own machine (and only there) through tools.
 - **Resilience**: everything restartable, safe mode, validated settings, rollback (future phase).
@@ -16,7 +16,8 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 
 ## Name and releases
 - **Daimon**: in Unix a daemon is the process that runs the machine in the background; in Greek the *daimon* is a
-  guiding spirit. Here the model is both. Internal names (`aios` binary, `/etc/aios`, `aios-data`) stay as they are.
+  guiding spirit. Here the model is both. Since 0.2.1 the internal names follow too: the `daimon` binary,
+  `/etc/daimon`, `/data/daimon`, the `daimon-data` partition (they were `aios`, from "AI OS").
 - **Semver**, and the **codename changes only with the major**: theme = mythic inert matter brought to life.
 
 | Versions | Codename | |
@@ -38,6 +39,7 @@ installs on real hardware, updates itself safely and runs unattended.
 |---|---|---|
 | **0.1.0** | Foundation: boot, agent, console, memory, controller, splash | ✅ released 2026-10-07 (`v0.1.0`) |
 | **0.2.0** | Installable: ISO installer, model download, resilient console, system changes in memory, `/` completion | ✅ released 2026-10-08 (`v0.2.0`) |
+| **0.2.1** | One name: `aios` → `daimon` inside too, old installs migrated | ✅ done |
 | **0.3.0** | The agent as a service, the console as a window | planned |
 | **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
 | **0.5.0** | Controller hardening | planned |
@@ -51,7 +53,7 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 
 ### 0.3.0 — The agent as a service, the console as a window
 - The agent loop leaves the TUI process: a new module `agent`, always on, serving a local socket
-  (`/run/aios/agent.sock`, JSON lines: prompts and confirmations in, the event flow out).
+  (`/run/daimon/agent.sock`, JSON lines: prompts and confirmations in, the event flow out).
 - The TUI becomes a client. **More windows on the same system**: screen, LAN, later a web page all see the same
   activity, and any of them can answer the controller's confirmations.
 - A console freeze or restart no longer interrupts an action halfway (a multi-step change completes); the
@@ -101,7 +103,7 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
   - **behaviour**: its own instructions and the skills it writes for itself (0.7 format);
   - **tools and reactions**: new tools, panels and event handlers as small programs in a sandboxed runtime shipped
     with the OS (WASM or an embedded script engine: no compiler on the box), with limited permissions.
-- The core (`aios`, the kernel, the controller's rules) stays signed and fixed: changing it is an update (0.8).
+- The core (`daimon`, the kernel, the controller's rules) stays signed and fixed: changing it is an update (0.8).
 - **Every self-change is staged and reversible**: proposed with a diff → judged by the controller → tried in a
   sandbox or a second console → shown to the owner → activated → health-checked, rolled back automatically if worse,
   kept in the changelog with the reason. Safe mode boots without any self-made change.
@@ -109,18 +111,25 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 
 ## Done
 
+### 0.2.1 — One name (2026-10-08)
+- The internal name `aios` becomes `daimon` everywhere: binary and crate (`daimon/`), `/etc/daimon`, `/run/daimon`,
+  `/usr/share/daimon`, `/data/daimon`, the `daimon-data` partition label, `daimon.*` kernel arguments, `[daimon]` logs,
+  `kernel/daimon.config`.
+- Installs from 0.2.0 keep working: a partition labelled `aios-data` is still found, and `/data/aios` is renamed to
+  `/data/daimon` at the first boot.
+
 ### 0.2.0 — Installable
 
 #### ✅ Installer ISO and first-boot setup (2026-10-08)
 - `./build.sh iso` → `out/daimon-<version>.iso`, **67 MB**, no models: UEFI, El Torito plus a GPT entry
   (`-isohybrid-gpt-basdat`) so the same file boots as a CD or `dd`'d to a USB stick. Its boot image `efiboot.img` is
   the ESP itself (FAT, the kernel as `EFI/BOOT/BOOTX64.EFI`). Release asset: the ISO only (GitHub's 2 GB limit).
-- The `tui` runs the wizard (`aios/src/setup.rs`) whenever `/data/models/current.gguf` or `judge.gguf` is missing:
-  - **booted from the ISO** (no `aios-data` partition): keyboard (applied at once), target disk, owner's name,
+- The `tui` runs the wizard (`daimon/src/setup.rs`) whenever `/data/models/current.gguf` or `judge.gguf` is missing:
+  - **booted from the ISO** (no `daimon-data` partition): keyboard (applied at once), target disk, owner's name,
     machine name, brain, controller, extra instructions, summary; typing `erase` confirms. Then
-    (`aios/src/install.rs`): GPT written in Rust (protective MBR, both headers, CRC32; checked against `sfdisk` in a
+    (`daimon/src/install.rs`): GPT written in Rust (protective MBR, both headers, CRC32; checked against `sfdisk` in a
     test), `efiboot.img` copied from the medium to the ESP, `mke2fs` (static e2fsprogs 1.47.2, built by `build.sh`,
-    1.4 MB) for `aios-data`, downloads, settings, memory; Enter reboots into the installed disk.
+    1.4 MB) for `daimon-data`, downloads, settings, memory; Enter reboots into the installed disk.
   - **data partition without models**: the same questions minus the disk.
 - **Downloads** from Hugging Face over HTTPS (ureq + rustls, +1 MB): controller first, resumable (`Range`, 20
   retries), SHA-256 checked against the LFS oid the API publishes (ring), progress with MB/s and ETA.
@@ -130,7 +139,7 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
   Qwen3.5 4B / 9B / 27B / 35B-A3B, or any GGUF given as `owner/repo/file.gguf` or link. Controller: **Kev 4B**, or
   Kev 0.8B when the RAM doesn't fit both.
 - New setting `hostname` (default `daimon`): kernel hostname at boot and when set, DHCP option 12.
-- `/data/aios/system-extra.md`: the owner's additions, appended to the system prompt under the code-enforced rules.
+- `/data/daimon/system-extra.md`: the owner's additions, appended to the system prompt under the code-enforced rules.
 - The owner's name becomes an `owner` note ("The owner wants the agent to call them …"), written by code.
 - Dev loop unchanged: `./build.sh` / `./build.sh run` still build the image with the models from `build/data`
   (no wizard). `./build.sh run-iso` installs the fresh ISO in QEMU onto a blank 32 GB disk.
@@ -146,7 +155,7 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 
 #### ✅ Console that can't stay frozen (2026-10-07)
 - Supervisor **watchdog**: a module with a `watchdog` file (seconds) must call `heartbeat()` (touches
-  `/run/aios/alive.<name>`) at least that often or it is killed and restarted. The `tui` has 10 s and beats every second
+  `/run/daimon/alive.<name>`) at least that often or it is killed and restarted. The `tui` has 10 s and beats every second
   from the UI loop and the splash.
 - **Ctrl+Alt+Del restarts the console** instead of rebooting: PID 1 sets `RB_DISABLE_CAD`, the kernel turns the key
   into SIGINT for PID 1, which kills every tty module (the keyboard driver handles it, so it works however frozen the
@@ -167,12 +176,12 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 
 #### ✅ Phase 0 — minimal boot
 - Linux 6.18 LTS, EFI stub (the kernel is the bootloader), built-in initramfs and cmdline.
-- `aios` as PID 1: mounts, network, module supervisor (`/etc/aios/modules`, overrides in `/data/modules`,
+- `daimon` as PID 1: mounts, network, module supervisor (`/etc/daimon/modules`, overrides in `/data/modules`,
   rescan every 0.5 s, crash backoff).
 - Static llama-server (CPU, AVX2).
 
 #### ✅ Phase 1 — agent + TUI
-- DHCP client in Rust; data partition found by GPT label `aios-data`.
+- DHCP client in Rust; data partition found by GPT label `daimon-data`.
 - Agent: streaming tool-calling loop over llama-server. Tools: `status`, `read_file`, `write_file`, `list_dir`, `run`,
   `config_set`, `restart_module`, `power`, `memory_save/search/read/forget`.
 - TUI on tty1 (ratatui): conversation on the left, system / brain / controller / modules sidebar on the right.
@@ -182,11 +191,11 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 
 #### ✅ Settings, prompt, context
 - Default brain in the image: **openbmb/MiniCPM5-2B-GGUF Q4_K_M** (temp 1.0, top_p 0.95, min_p 0, repeat_penalty 1.05).
-- `/data/aios/config`: `ctx` (32768, model max 131072), `kv_cache`, `threads`, `port`, `model`, `extra_args` → restart `llm`;
+- `/data/daimon/config`: `ctx` (32768, model max 131072), `kv_cache`, `threads`, `port`, `model`, `extra_args` → restart `llm`;
   `judge_model`, `judge_port` → restart `judge`; `controller`, `thinking`, `thinking_budget` (512), sampling, `max_steps` → live.
 - Console commands (work with the brain down): `/help /config /set /reset /restart /new /safe`.
 - Strong system prompt (identity, detected hardware, architecture, controller, memory rule, "think briefly, act"),
-  replaceable with `/data/aios/system.md`.
+  replaceable with `/data/daimon/system.md`.
 - Prompt-cache warm-up at boot; "reading context N/M" progress; oldest turns dropped at 70% of the context.
 
 #### ✅ English as the standard language
@@ -215,7 +224,7 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
   copy it to `/data/models` and `/set judge_model /data/models/Kev-0.8B-Q8_0.gguf`.
 - llama-server runs the judge with `--parallel 4 --kv-unified`: the questions of one request are batched together
   (action check on the dev box: 10.5 s → ~7.8 s; same RAM, the 4 slots share the 4096-token cache).
-- What it decides (code in `aios/src/judge.rs`, thresholds from the bench):
+- What it decides (code in `daimon/src/judge.rs`, thresholds from the bench):
   - **memory gate**: topic choice + 4 veto questions (injection, other person, general knowledge, personal life).
     Allowed-topic mass ≥ 0.7 → allow; < 0.4 → refuse; in between allow only if every veto < 0.3.
     The vetos are asked only for borderline notes (~20% in the bench): ~7 s for most notes, ~15 s when borderline.
@@ -253,10 +262,10 @@ Notes: with a bare yes/no question (no `criteria` descriptions) every model lean
 bench when adding cases or switching model.
 
 #### ✅ Console UI on the framebuffer (2026-10-05)
-- `aios/src/fb.rs`: a ratatui backend that paints `/dev/fb0` directly (kernel `CONFIG_FB_DEVICE=y`): 24-bit colour,
+- `daimon/src/fb.rs`: a ratatui backend that paints `/dev/fb0` directly (kernel `CONFIG_FB_DEVICE=y`): 24-bit colour,
   anti-aliased glyphs, VT in `KD_GRAPHICS` so the kernel console does not draw over it. No usable framebuffer
   (or not 32 bpp) → falls back to the text console; the footer says why.
-- Fonts: `tools/mkfont.py` renders DejaVu Sans Mono (regular + bold) at 4 sizes into `/usr/share/aios/fonts`
+- Fonts: `tools/mkfont.py` renders DejaVu Sans Mono (regular + bold) at 4 sizes into `/usr/share/daimon/fonts`
   (2.6 MB, 2501 glyphs: Latin, Greek, Cyrillic, arrows, symbols). Box drawing, blocks, braille, pills and meter bands
   are drawn procedurally so lines meet at cell edges; 18 Lucide-style vector icons rasterised into the Private Use Area.
   `ui_font` = auto (by resolution) or 17/19/24/30 px, applied live.
@@ -268,21 +277,21 @@ bench when adding cases or switching model.
 
 #### ✅ Keyboard layouts (2026-10-05)
 - 59 layouts (us, us-intl, dvorak, colemak, gb, it, de, fr, bepo, es, pt, br, ch, nordics, pl, cz, hu, ro, tr, gr, ru,
-  ua, jp, …) built from the host's XKB data by `tools/mkkeymaps.py` (ckbcomp) into `/usr/share/aios/keymaps`, with
-  the dead-key table derived from Unicode composition. Loaded by `aios/src/keyboard.rs` with `KDSKBENT` /
+  ua, jp, …) built from the host's XKB data by `tools/mkkeymaps.py` (ckbcomp) into `/usr/share/daimon/keymaps`, with
+  the dead-key table derived from Unicode composition. Loaded by `daimon/src/keyboard.rs` with `KDSKBENT` /
   `KDSKBDIACRUC`: no loadkeys, no kbd package.
 - `keymap` setting (`/set keymap it`, or ask the agent): applied at once and at every boot; a wrong name lists them all.
   `/keymaps` lists them with descriptions. Verified in QEMU: è é à ò ù ì £ € [ ] { @ on `it`.
 
 #### ✅ Boot splash (2026-10-07)
-- `aios/src/splash.rs`, run by the `tui` module on the framebuffer from the moment it starts: the mark (a ring drawn
+- `daimon/src/splash.rs`, run by the `tui` module on the framebuffer from the moment it starts: the mark (a ring drawn
   on, two counter-rotating comets, a breathing core with a glow), the **DAIMON** wordmark (URW Gothic, rendered at
-  build time by `tools/mklogo.py` into `/usr/share/aios/logo.alf`, scaled at runtime) with a light sweep, version and
+  build time by `tools/mklogo.py` into `/usr/share/daimon/logo.alf`, scaled at runtime) with a light sweep, version and
   codename, then the live boot steps: kernel, network, brain, controller, instructions (prompt warm-up), with an
   overall progress bar. Only the moving regions are redrawn (~30 fps, off-screen then copied).
 - Leaves with a 0.6 s fade into the console once the brain has its instructions and the controller answers
   (at least 2.8 s, so a fast machine still shows the intro), or on any key. Runs once per boot
-  (`/run/aios/splash-done`): a restarted TUI goes straight to the console. Text console: no splash.
+  (`/run/daimon/splash-done`): a restarted TUI goes straight to the console. Text console: no splash.
 - Kernel cmdline `vt.global_cursor_default=0`: no blinking cursor between firmware and splash.
 - Verified in QEMU (1280x800): `docs/boot.gif`.
 

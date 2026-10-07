@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bitmap fonts for the Daimon framebuffer console (aios/src/fb.rs).
+"""Bitmap fonts for the Daimon framebuffer console (daimon/src/fb.rs).
 
   python3 tools/mkfont.py <out_dir>
 

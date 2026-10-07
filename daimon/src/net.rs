@@ -1,5 +1,5 @@
 //! IPv4 setup. Static from the kernel cmdline:
-//!   aios.ip=10.0.2.15/24 aios.gw=10.0.2.2 aios.dns=10.0.2.3 [aios.if=eth0]
+//!   daimon.ip=10.0.2.15/24 daimon.gw=10.0.2.2 daimon.dns=10.0.2.3 [daimon.if=eth0]
 //! otherwise a DHCP client per interface, in its own thread so boot never waits on the network.
 
 use crate::log;
@@ -15,23 +15,23 @@ pub fn up(args: &HashMap<String, String>) {
     set_up(s, "lo");
     unsafe { libc::close(s) };
 
-    let Some((ip, prefix)) = args.get("aios.ip").and_then(|v| v.split_once('/')) else {
+    let Some((ip, prefix)) = args.get("daimon.ip").and_then(|v| v.split_once('/')) else {
         for iface in ifaces() {
             std::thread::spawn(move || dhcp_loop(&iface));
         }
         return;
     };
-    let iface = args.get("aios.if").map_or("eth0", String::as_str);
+    let iface = args.get("daimon.if").map_or("eth0", String::as_str);
     match (ip.parse(), prefix.parse::<u32>()) {
         (Ok(ip), Ok(p)) if p <= 32 => apply(&Lease {
             iface: iface.into(),
             ip,
             mask: Ipv4Addr::from(u32::MAX.checked_shl(32 - p).unwrap_or(0)),
-            gw: args.get("aios.gw").and_then(|g| g.parse().ok()),
-            dns: args.get("aios.dns").and_then(|g| g.parse().ok()),
+            gw: args.get("daimon.gw").and_then(|g| g.parse().ok()),
+            dns: args.get("daimon.dns").and_then(|g| g.parse().ok()),
             secs: 0,
         }),
-        _ => log("net: bad aios.ip"),
+        _ => log("net: bad daimon.ip"),
     }
 }
 
@@ -84,8 +84,8 @@ fn apply(l: &Lease) {
         let _ = fs::write("/etc/resolv.conf", format!("nameserver {dns}\n"));
     }
     let prefix = u32::from(l.mask).leading_ones();
-    let _ = fs::create_dir_all("/run/aios");
-    let _ = fs::write(format!("/run/aios/ip.{}", l.iface), format!("{}/{prefix}\n", l.ip));
+    let _ = fs::create_dir_all("/run/daimon");
+    let _ = fs::write(format!("/run/daimon/ip.{}", l.iface), format!("{}/{prefix}\n", l.ip));
     log(&format!("net: {} {}/{prefix}", l.iface, l.ip));
 }
 

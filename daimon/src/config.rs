@@ -1,10 +1,10 @@
-//! /data/aios/config: `key = value` lines. One table defines every knob, its default and how to validate it.
+//! /data/daimon/config: `key = value` lines. One table defines every knob, its default and how to validate it.
 //! Server keys restart the `llm` module; request keys apply to the next message.
 
 use std::collections::HashMap;
 use std::fs;
 
-pub const PATH: &str = "/data/aios/config";
+pub const PATH: &str = "/data/daimon/config";
 
 #[derive(PartialEq)]
 pub enum Scope {
@@ -115,7 +115,7 @@ fn save(m: &HashMap<String, String>) -> Result<(), String> {
             out += &format!("{} = {}\n# {}\n", k.name, m.get(k.name).map_or(k.default, String::as_str), k.help);
         }
     }
-    let _ = fs::create_dir_all("/data/aios");
+    let _ = fs::create_dir_all("/data/daimon");
     fs::write(PATH, out).map_err(|e| e.to_string())
 }
 
@@ -135,7 +135,7 @@ pub fn describe() -> String {
         .collect()
 }
 
-/// Exec llama-server with the configured flags (the `llm` module's cmd is `aios llm`).
+/// Exec llama-server with the configured flags (the `llm` module's cmd is `daimon llm`).
 pub fn exec_llm() -> ! {
     use std::os::unix::process::CommandExt;
     let c = load();
@@ -158,8 +158,8 @@ pub fn exec_llm() -> ! {
         args.extend(["-t".into(), c["threads"].clone()]);
     }
     args.extend(c["extra_args"].split_whitespace().map(String::from));
-    eprintln!("aios llm: llama-server {}", args.join(" "));
+    eprintln!("daimon llm: llama-server {}", args.join(" "));
     let e = std::process::Command::new("/usr/bin/llama-server").args(&args).exec();
-    eprintln!("aios llm: exec failed: {e}");
+    eprintln!("daimon llm: exec failed: {e}");
     std::process::exit(1);
 }

@@ -3,7 +3,7 @@
 
   python3 tools/mkkeymaps.py <out_dir>
 
-Writes <out_dir>/<name>.akm (loaded by aios with KDSKBENT/KDSKBDIACRUC, see aios/src/keyboard.rs) and
+Writes <out_dir>/<name>.akm (loaded by daimon with KDSKBENT/KDSKBDIACRUC, see daimon/src/keyboard.rs) and
 <out_dir>/index.txt ("name<TAB>description" per line). Format of .akm, little endian:
   b"AKM1", u16 n, n x (u8 table, u8 keycode, u16 value), u16 d, d x (u32 diacr, u32 base, u32 result)
 `value` is what KDSKBENT takes: K(type, val), or U+xxxx ^ 0xF000 for Unicode symbols.

@@ -4,7 +4,7 @@
 use std::fs;
 use std::os::fd::AsRawFd;
 
-pub const DIR: &str = "/usr/share/aios/keymaps";
+pub const DIR: &str = "/usr/share/daimon/keymaps";
 
 const KDSKBENT: libc::Ioctl = 0x4B47;
 const KDSKBMODE: libc::Ioctl = 0x4B45;

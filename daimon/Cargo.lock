@@ -12,17 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aios"
-version = "0.2.0"
-dependencies = [
- "libc",
- "ratatui",
- "ring",
- "serde_json",
- "ureq",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -232,6 +221,17 @@ checksum = "eb2a7d3066da2de787b7f032c736763eb7ae5d355f81a68bab2675a96008b0bf"
 dependencies = [
  "lab",
  "phf",
+]
+
+[[package]]
+name = "daimon"
+version = "0.2.1"
+dependencies = [
+ "libc",
+ "ratatui",
+ "ring",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

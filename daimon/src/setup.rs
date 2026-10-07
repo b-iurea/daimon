@@ -476,7 +476,7 @@ fn draw(f: &mut Frame, s: &Setup, net: &[String]) {
         }
         Step::Extra => {
             l.push(head("Anything to add to the agent's instructions?"));
-            l.push(dim("Optional, in English. Editable later in /data/aios/system-extra.md.".into()));
+            l.push(dim("Optional, in English. Editable later in /data/daimon/system-extra.md.".into()));
             l.push(Line::raw(""));
             for (i, line) in wrap(&s.extra, width.saturating_sub(4)).into_iter().enumerate() {
                 l.push(if i == 0 { field(&line, s.tick) } else { Line::from(Span::styled(format!("   {line}"), fg(STRONG))) });

@@ -183,7 +183,7 @@ pub fn check_action(owner_request: &str, tool: &str, args: &Value) -> Result<Opt
     Ok(why.map(String::from))
 }
 
-/// Exec llama-server for the decision model (the `judge` module's cmd is `aios judge`).
+/// Exec llama-server for the decision model (the `judge` module's cmd is `daimon judge`).
 pub fn exec() -> ! {
     use std::os::unix::process::CommandExt;
     let c = config::load();
@@ -206,8 +206,8 @@ pub fn exec() -> ! {
         "4",
         "--kv-unified",
     ];
-    eprintln!("aios judge: llama-server {}", args.join(" "));
+    eprintln!("daimon judge: llama-server {}", args.join(" "));
     let e = std::process::Command::new("/usr/bin/llama-server").args(args).exec();
-    eprintln!("aios judge: exec failed: {e}");
+    eprintln!("daimon judge: exec failed: {e}");
     std::process::exit(1);
 }

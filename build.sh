@@ -12,10 +12,10 @@ OUT=$ROOT/out
 DISK=${DISK:-16G}
 mkdir -p "$OUT"
 MODE=${1:-}
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' aios/Cargo.toml)
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' daimon/Cargo.toml)
 
 # --- userspace
-cargo build -q --release --target x86_64-unknown-linux-musl --manifest-path aios/Cargo.toml
+cargo build -q --release --target x86_64-unknown-linux-musl --manifest-path daimon/Cargo.toml
 strip -o "$OUT/llama-server" build/llama.cpp/build-cpu/bin/llama-server
 # console assets, rebuilt only when their generator changes (need ckbcomp + python3-pil on the host)
 [ "$OUT/keymaps/index.txt" -nt tools/mkkeymaps.py ] || python3 tools/mkkeymaps.py "$OUT/keymaps"
@@ -32,15 +32,15 @@ fi
 mod() { # mod <name> <cmd> [tty] [watchdog seconds]
   mkdir -p "$OUT/rootfs/$1"
   echo "$2" > "$OUT/rootfs/$1/cmd"
-  echo "dir /etc/aios/modules/$1 0755 0 0"
-  echo "file /etc/aios/modules/$1/cmd $OUT/rootfs/$1/cmd 0644 0 0"
+  echo "dir /etc/daimon/modules/$1 0755 0 0"
+  echo "file /etc/daimon/modules/$1/cmd $OUT/rootfs/$1/cmd 0644 0 0"
   if [ -n "${3:-}" ]; then
     echo "$3" > "$OUT/rootfs/$1/tty"
-    echo "file /etc/aios/modules/$1/tty $OUT/rootfs/$1/tty 0644 0 0"
+    echo "file /etc/daimon/modules/$1/tty $OUT/rootfs/$1/tty 0644 0 0"
   fi
   if [ -n "${4:-}" ]; then
     echo "$4" > "$OUT/rootfs/$1/watchdog"
-    echo "file /etc/aios/modules/$1/watchdog $OUT/rootfs/$1/watchdog 0644 0 0"
+    echo "file /etc/daimon/modules/$1/watchdog $OUT/rootfs/$1/watchdog 0644 0 0"
   fi
 }
 {
@@ -53,31 +53,31 @@ dir /run 0755 0 0
 dir /tmp 1777 0 0
 dir /data 0755 0 0
 dir /etc 0755 0 0
-dir /etc/aios 0755 0 0
-dir /etc/aios/modules 0755 0 0
+dir /etc/daimon 0755 0 0
+dir /etc/daimon/modules 0755 0 0
 dir /usr 0755 0 0
 dir /usr/bin 0755 0 0
-file /init $ROOT/aios/target/x86_64-unknown-linux-musl/release/aios 0755 0 0
-slink /usr/bin/aios /init 0777 0 0
+file /init $ROOT/daimon/target/x86_64-unknown-linux-musl/release/daimon 0755 0 0
+slink /usr/bin/daimon /init 0777 0 0
 file /usr/bin/llama-server $OUT/llama-server 0755 0 0
 file /usr/bin/mke2fs $ROOT/build/mke2fs 0755 0 0
 dir /usr/share 0755 0 0
-dir /usr/share/aios 0755 0 0
-dir /usr/share/aios/keymaps 0755 0 0
-dir /usr/share/aios/fonts 0755 0 0
+dir /usr/share/daimon 0755 0 0
+dir /usr/share/daimon/keymaps 0755 0 0
+dir /usr/share/daimon/fonts 0755 0 0
 EOF
-  for f in "$OUT"/keymaps/*; do echo "file /usr/share/aios/keymaps/${f##*/} $f 0644 0 0"; done
-  echo "file /usr/share/aios/logo.alf $OUT/logo.alf 0644 0 0"
-  for f in "$OUT"/fonts/*.fnt; do echo "file /usr/share/aios/fonts/${f##*/} $f 0644 0 0"; done
-  mod llm "/usr/bin/aios llm"
-  mod judge "/usr/bin/aios judge"
-  mod tui "/usr/bin/aios tui" tty1 10
+  for f in "$OUT"/keymaps/*; do echo "file /usr/share/daimon/keymaps/${f##*/} $f 0644 0 0"; done
+  echo "file /usr/share/daimon/logo.alf $OUT/logo.alf 0644 0 0"
+  for f in "$OUT"/fonts/*.fnt; do echo "file /usr/share/daimon/fonts/${f##*/} $f 0644 0 0"; done
+  mod llm "/usr/bin/daimon llm"
+  mod judge "/usr/bin/daimon judge"
+  mod tui "/usr/bin/daimon tui" tty1 10
 } > "$OUT/initramfs.list"
 
 # --- kernel (relinks in seconds when only the initramfs changed)
 cd "$K"
 make -s defconfig && make -s kvm_guest.config >/dev/null
-scripts/kconfig/merge_config.sh -m .config "$ROOT/kernel/aios.config" >/dev/null
+scripts/kconfig/merge_config.sh -m .config "$ROOT/kernel/daimon.config" >/dev/null
 scripts/config --set-str INITRAMFS_SOURCE "$OUT/initramfs.list"
 make -s olddefconfig
 make -s -j"$(nproc)" bzImage
@@ -112,18 +112,18 @@ if [ "$MODE" = iso ] || [ "$MODE" = run-iso ]; then
     -nic user,model=virtio-net-pci,hostfwd=tcp::8080-:8080 -serial stdio
 fi
 
-# --- dev disk: GPT, 64M EFI system partition + ext4 "aios-data" with the models (so no wizard)
+# --- dev disk: GPT, 64M EFI system partition + ext4 "daimon-data" with the models (so no wizard)
 IMG=$OUT/daimon.raw
 rm -f "$IMG"
 truncate -s "$DISK" "$IMG"
 sfdisk -q "$IMG" <<EOF
 label: gpt
 start=1MiB, size=64MiB, type=uefi, name=EFI
-start=65MiB, type=linux, name=aios-data
+start=65MiB, type=linux, name=daimon-data
 EOF
 dd if="$ESP" of="$IMG" bs=1M seek=1 conv=notrunc,sparse status=none
 DATA_KB=$(( $(stat -c %s "$IMG") / 1024 - 65 * 1024 - 1024 )) # leave room for the backup GPT
-mke2fs -q -t ext4 -L aios-data -d build/data -E offset=$((65 * 1024 * 1024)) "$IMG" "${DATA_KB}k"
+mke2fs -q -t ext4 -L daimon-data -d build/data -E offset=$((65 * 1024 * 1024)) "$IMG" "${DATA_KB}k"
 qemu-img convert -O qcow2 "$IMG" "$OUT/daimon.qcow2"
 rm -f "$IMG"
 

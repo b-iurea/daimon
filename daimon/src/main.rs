@@ -25,40 +25,40 @@ fn main() {
         Some("llm") => config::exec_llm(),
         Some("judge") => judge::exec(),
         _ => {
-            eprintln!("usage: aios tui|llm|judge   (as PID 1 it boots the system)");
+            eprintln!("usage: daimon tui|llm|judge   (as PID 1 it boots the system)");
             std::process::exit(2);
         }
     }
 }
 
 pub fn log(msg: &str) {
-    eprintln!("[aios] {msg}");
+    eprintln!("[daimon] {msg}");
     use std::io::Write;
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/run/log/aios.log") {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/run/log/daimon.log") {
         let _ = writeln!(f, "{msg}");
     }
 }
 
-/// Safe mode (this boot only): ignore /data/modules and /data/aios/config, run factory defaults.
-pub const SAFE_FLAG: &str = "/run/aios/safe";
+/// Safe mode (this boot only): ignore /data/modules and /data/daimon/config, run factory defaults.
+pub const SAFE_FLAG: &str = "/run/daimon/safe";
 pub fn safe_mode() -> bool {
     std::path::Path::new(SAFE_FLAG).exists()
 }
 
 /// SIGTERM a module's process group; the supervisor brings it back up.
 pub fn restart_module(name: &str) -> Result<String, String> {
-    let state = fs::read_to_string("/run/aios/modules").unwrap_or_default();
+    let state = fs::read_to_string("/run/daimon/modules").unwrap_or_default();
     let line = state.lines().find(|l| l.split_whitespace().next() == Some(name)).ok_or(format!("no module '{name}'"))?;
     let pid: i32 = line.split_whitespace().nth(1).and_then(|p| p.parse().ok()).ok_or(format!("{name} is not running"))?;
     unsafe { libc::kill(-pid, libc::SIGTERM) };
     Ok(format!("{name} (pid {pid}) restarting"))
 }
 
-/// The GPT partition named `aios-data`, found via sysfs (no udev here).
+/// The GPT partition named `daimon-data` (or `aios-data`, installs before 0.2.1), found via sysfs (no udev here).
 fn find_data_partition() -> Option<String> {
     fs::read_dir("/sys/class/block").ok()?.flatten().find_map(|e| {
         let ue = fs::read_to_string(e.path().join("uevent")).ok()?;
-        ue.lines().any(|l| l == "PARTNAME=aios-data").then(|| format!("/dev/{}", e.file_name().to_string_lossy()))
+        ue.lines().any(|l| l == "PARTNAME=daimon-data" || l == "PARTNAME=aios-data").then(|| format!("/dev/{}", e.file_name().to_string_lossy()))
     })
 }
 
@@ -73,13 +73,13 @@ fn mount(src: &str, dst: &str, fstype: &str, data: &str) -> bool {
     ok
 }
 
-/// `aios.key=value` pairs from the kernel command line.
+/// `daimon.key=value` pairs from the kernel command line.
 fn cmdline() -> HashMap<String, String> {
     fs::read_to_string("/proc/cmdline")
         .unwrap_or_default()
         .split_whitespace()
         .filter_map(|kv| kv.split_once('='))
-        .filter(|(k, _)| k.starts_with("aios."))
+        .filter(|(k, _)| k.starts_with("daimon."))
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
 }
@@ -97,13 +97,17 @@ fn init() -> ! {
     // Every step is best effort: nothing here may stop the supervisor from running.
     // ponytail: disks probed once at boot; a late USB/NVMe controller would be missed
     std::thread::sleep(Duration::from_millis(300));
-    match args.get("aios.data").cloned().or_else(find_data_partition) {
+    match args.get("daimon.data").cloned().or_else(find_data_partition) {
         Some(dev) => {
             if mount(&dev, "/data", "ext4", "") {
                 log(&format!("data: {dev} on /data"));
+                // installs before 0.2.1 kept settings in /data/aios
+                if !std::path::Path::new("/data/daimon").exists() && fs::rename("/data/aios", "/data/daimon").is_ok() {
+                    log("data: /data/aios renamed to /data/daimon");
+                }
             }
         }
-        None => log("data: no aios-data partition, running without persistence"),
+        None => log("data: no daimon-data partition, running without persistence"),
     }
     match keyboard::apply(&config::get("keymap")) {
         Ok(m) => log(&m),
@@ -129,7 +133,7 @@ extern "C" fn on_ctrl_alt_del(_: libc::c_int) {
 
 /// Modules with a `watchdog` file touch this every second or so; see supervise.
 pub fn heartbeat(module: &str) {
-    let _ = fs::write(format!("/run/aios/alive.{module}"), "");
+    let _ = fs::write(format!("/run/daimon/alive.{module}"), "");
 }
 
 // ---------------------------------------------------------------- supervisor
@@ -139,10 +143,10 @@ pub fn heartbeat(module: &str) {
 //   tty       optional: run attached to this tty (e.g. "tty1")
 //   disabled  optional: present = don't run
 //   watchdog  optional: seconds; the module must call heartbeat() at least that often or it is killed
-// Built-ins live in /etc/aios/modules, /data/modules overrides by name.
+// Built-ins live in /etc/daimon/modules, /data/modules overrides by name.
 // The tree is rescanned every tick, so editing it is how the system changes itself.
 
-const MODULE_DIRS: [&str; 2] = ["/etc/aios/modules", "/data/modules"];
+const MODULE_DIRS: [&str; 2] = ["/etc/daimon/modules", "/data/modules"];
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Clone, PartialEq)]
@@ -306,7 +310,7 @@ fn supervise() -> ! {
             let (Some(pid), Some(limit)) = (m.pid, m.spec.watchdog) else {
                 continue;
             };
-            let beat = fs::metadata(format!("/run/aios/alive.{name}")).and_then(|md| md.modified()).ok().and_then(|t| t.elapsed().ok());
+            let beat = fs::metadata(format!("/run/daimon/alive.{name}")).and_then(|md| md.modified()).ok().and_then(|t| t.elapsed().ok());
             let quiet = beat.map_or(m.started.elapsed(), |b| b.min(m.started.elapsed()));
             let why = if cad && m.spec.tty.is_some() {
                 "Ctrl+Alt+Del".to_string()
@@ -336,8 +340,8 @@ fn supervise() -> ! {
                 format!("{n} {} {}\n", m.pid.map_or("-".into(), |p| p.to_string()), m.restarts)
             })
             .collect();
-        let _ = fs::create_dir_all("/run/aios");
-        let _ = fs::write("/run/aios/modules", state);
+        let _ = fs::create_dir_all("/run/daimon");
+        let _ = fs::write("/run/daimon/modules", state);
 
         // ponytail: 500ms polling; switch to signalfd(SIGCHLD)+inotify if latency matters
         std::thread::sleep(Duration::from_millis(500));

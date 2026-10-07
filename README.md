@@ -4,15 +4,15 @@
 
 **An operating system where the language model *is* the system.**
 
-[![version](https://img.shields.io/badge/version-0.2.0-22c55e?style=flat-square)](PLAN.md#roadmap--0x-deucalion)
+[![version](https://img.shields.io/badge/version-0.2.1-22c55e?style=flat-square)](PLAN.md#roadmap--0x-deucalion)
 [![codename](https://img.shields.io/badge/codename-Deucalion-38bdf8?style=flat-square)](PLAN.md#name-and-releases)
 [![ISO](https://img.shields.io/badge/ISO-67_MB-f59e0b?style=flat-square)](#install)
 [![OS](https://img.shields.io/badge/OS-25_MB-f59e0b?style=flat-square)](#size)
 [![license](https://img.shields.io/badge/license-GPL--3.0-a78bfa?style=flat-square)](LICENSE)
 <br>
 [![platform](https://img.shields.io/badge/x86__64-UEFI-334155?style=flat-square)](#install)
-[![kernel](https://img.shields.io/badge/Linux-6.18_LTS-334155?style=flat-square&logo=linux&logoColor=white)](kernel/aios.config)
-[![rust](https://img.shields.io/badge/Rust-2024-334155?style=flat-square&logo=rust&logoColor=white)](aios)
+[![kernel](https://img.shields.io/badge/Linux-6.18_LTS-334155?style=flat-square&logo=linux&logoColor=white)](kernel/daimon.config)
+[![rust](https://img.shields.io/badge/Rust-2024-334155?style=flat-square&logo=rust&logoColor=white)](daimon)
 [![llama.cpp](https://img.shields.io/badge/inference-llama.cpp-334155?style=flat-square)](https://github.com/ggml-org/llama.cpp)
 [![models](https://img.shields.io/badge/models-Hugging_Face-334155?style=flat-square&logo=huggingface&logoColor=white)](#models)
 
@@ -36,7 +36,7 @@ The whole OS is a single 25 MB EFI file; the installer ISO is 67 MB. The models 
 ```mermaid
 flowchart LR
     FW[UEFI firmware] --> K[Linux 6.18<br/>EFI stub, initramfs built in]
-    K --> I[aios · PID 1<br/>mounts, network, supervisor]
+    K --> I[daimon · PID 1<br/>mounts, network, supervisor]
     I --> LLM[llm<br/>llama-server · the brain<br/>:8080]
     I --> J[judge<br/>llama-server · the controller<br/>127.0.0.1:8081]
     I --> T[tui<br/>agent + console on tty1]
@@ -51,7 +51,7 @@ flowchart LR
 |---|---|---|
 | Brain | A chat model (MiniCPM5 2B by default) | Understands the owner, plans, calls tools: `status`, `read_file`, `write_file`, `list_dir`, `run`, `config_set`, `restart_module`, `power`, `memory_*` |
 | Controller | A decision model ([Kev](https://huggingface.co/ggml-org/Kev-4B-GGUF) 4B by default) served by llama.cpp's `/v1/systemone` | Before every action that changes the system: *does it do what the owner asked?* and *could it break the machine or lock the owner out?* Before every memory: *is it about this system, the agent or the owner?* |
-| Code | Rust, in `aios` | Enforces what must never depend on a model: power actions always ask the owner; if the controller is down, every change asks the owner and every memory is refused; the memory tree can't be written by generic file tools |
+| Code | Rust, in `daimon` | Enforces what must never depend on a model: power actions always ask the owner; if the controller is down, every change asks the owner and every memory is refused; the memory tree can't be written by generic file tools |
 
 Every controller decision is shown on screen as a card, with each question, its probability, the threshold and the
 verdict, so the owner sees what the system was about to do and why it was stopped or allowed.
@@ -59,8 +59,8 @@ verdict, so the owner sees what the system was about to do and why it was stoppe
 ## Features
 
 - **Tiny and self-contained**: kernel + init + agent + console + llama.cpp in 25 MB. Userspace is one static Rust
-  binary (`aios`, 2.6 MB).
-- **Modular**: every component is a supervised module (`/etc/aios/modules`, overridable in `/data/modules`) with
+  binary (`daimon`, 2.6 MB).
+- **Modular**: every component is a supervised module (`/etc/daimon/modules`, overridable in `/data/modules`) with
   crash backoff; none is a hard dependency of the others. A frozen console is killed by a watchdog, or by
   **Ctrl+Alt+Del**, which restarts the console instead of rebooting.
 - **Long-term memory**: plain Markdown notes in an llm-wiki layout, searched with BM25. By a rule enforced in code
@@ -151,8 +151,8 @@ What lives on the data partition:
 ```
 /data/models/            current.gguf (brain) and judge.gguf (controller), links to the downloaded files
 /data/memory/            the agent's notes: system/, self/, owner/, plus _index.md
-/data/aios/config        settings (key = value), also editable with /set or by asking the agent
-/data/aios/system-extra.md   your additions to the agent's instructions
+/data/daimon/config        settings (key = value), also editable with /set or by asking the agent
+/data/daimon/system-extra.md   your additions to the agent's instructions
 /data/modules/           module overrides: a directory per module with cmd, tty, disabled, watchdog
 ```
 
@@ -185,12 +185,12 @@ For the dev image, put a brain and a controller in `build/data/models/` as `curr
 `build.sh` fetches and builds the static `mke2fs` and unpacks `xorriso` itself. QEMU needs KVM; on WSL:
 `sudo usermod -aG kvm $USER`, then `wsl --shutdown`.
 
-Tests: `cargo test --target x86_64-unknown-linux-musl` in `aios/`.
+Tests: `cargo test --target x86_64-unknown-linux-musl` in `daimon/`.
 
 ### Layout
 
 ```
-aios/src/      main.rs     PID 1: mounts, supervisor, watchdog, Ctrl+Alt+Del
+daimon/src/      main.rs     PID 1: mounts, supervisor, watchdog, Ctrl+Alt+Del
                agent.rs    the tool-calling loop, tools, system prompt
                judge.rs    the controller's questions and thresholds
                memory.rs   notes, index, BM25, recorded system changes

@@ -48,20 +48,20 @@ const SYSTEM: &str = r#"You are Daimon. You are not an assistant running on a co
 {facts}
 
 # How you are built
-- Linux kernel + one Rust binary, /usr/bin/aios: it is PID 1 (supervisor), this console UI, and you.
-- There is NO shell and NO coreutils. `run` executes a binary directly. Existing binaries: /usr/bin/aios, /usr/bin/llama-server.
+- Linux kernel + one Rust binary, /usr/bin/daimon: it is PID 1 (supervisor), this console UI, and you.
+- There is NO shell and NO coreutils. `run` executes a binary directly. Existing binaries: /usr/bin/daimon, /usr/bin/llama-server.
 - / lives in RAM and is rebuilt at every boot. /data is the only persistent disk. /proc and /sys work as on any Linux.
 - Everything that runs is a module: a directory containing `cmd` (one line: program and args), optional `tty`, optional empty `disabled` file.
-  Built-in modules: /etc/aios/modules. Persistent modules and overrides: /data/modules (same name wins).
+  Built-in modules: /etc/daimon/modules. Persistent modules and overrides: /data/modules (same name wins).
   The supervisor rescans every 0.5s: create a module dir to start it, change `cmd` to restart it, add `disabled` to stop it. Crashes restart with backoff.
-- Live state: /run/aios/modules (name pid restarts, pid "-" = down). Logs: /run/log/<module>.log; boot log: /run/log/aios.log. IPs: /run/aios/ip.<iface>.
+- Live state: /run/daimon/modules (name pid restarts, pid "-" = down). Logs: /run/log/<module>.log; boot log: /run/log/daimon.log. IPs: /run/daimon/ip.<iface>.
 - Your brain is module `llm` (llama-server, OpenAI API on the LAN). Your face is module `tui` (this console; you live inside it).
   Breaking either makes you unreachable: explain the risk and ask before touching them.
 
-# Settings: /data/aios/config
+# Settings: /data/daimon/config
 Change them with config_set (validated). [restart] keys restart your brain: you wait ~10s automatically. [live] keys apply to your next reply.
 {config}
-Your system prompt can be replaced by writing /data/aios/system.md.
+Your system prompt can be replaced by writing /data/daimon/system.md.
 The owner can also type console commands: /help /config /set /restart /new /safe.
 
 # Controller
@@ -95,11 +95,11 @@ Current notes:
 "#;
 
 /// The owner's own additions to the instructions (asked at install time, editable later).
-pub const EXTRA_PROMPT: &str = "/data/aios/system-extra.md";
+pub const EXTRA_PROMPT: &str = "/data/daimon/system-extra.md";
 
 fn system_prompt() -> String {
     if !crate::safe_mode() {
-        if let Ok(custom) = fs::read_to_string("/data/aios/system.md") {
+        if let Ok(custom) = fs::read_to_string("/data/daimon/system.md") {
             return custom;
         }
     }
@@ -111,7 +111,7 @@ fn system_prompt() -> String {
         .ok()
         .and_then(|m| m.lines().next()?.split_whitespace().nth(1)?.parse::<f64>().ok())
         .map_or(0.0, |kb| kb / 1048576.0);
-    let ips: Vec<String> = fs::read_dir("/run/aios")
+    let ips: Vec<String> = fs::read_dir("/run/daimon")
         .into_iter()
         .flatten()
         .flatten()
@@ -157,7 +157,7 @@ fn tools() -> Value {
             json!({"argv": {"type":"array","items":{"type":"string"}}}),
             &["argv"]
         ),
-        f("config_set", "Change one setting in /data/aios/config (see the list in your instructions).", json!({"key": s, "value": s}), &["key", "value"]),
+        f("config_set", "Change one setting in /data/daimon/config (see the list in your instructions).", json!({"key": s, "value": s}), &["key", "value"]),
         f("restart_module", "Restart a running module by name.", json!({"name": s}), &["name"]),
         f(
             "memory_save",
@@ -508,7 +508,7 @@ pub fn call(name: &str, args: &str) -> String {
 fn status() -> String {
     let rd = |p: &str| fs::read_to_string(p).unwrap_or_default();
     let mem: String = rd("/proc/meminfo").lines().filter(|l| l.starts_with("Mem")).map(|l| format!("{l}\n")).collect();
-    let ips: String = fs::read_dir("/run/aios")
+    let ips: String = fs::read_dir("/run/daimon")
         .into_iter()
         .flatten()
         .flatten()
@@ -524,7 +524,7 @@ fn status() -> String {
     format!(
         "modules (name pid restarts; pid '-' = down){}:\n{}\n{mem}\nloadavg: {}cpus: {}\nnetwork:\n{ips}\ndisks (/proc/partitions):\n{}\nmodels in /data/models:\n{models}\nsettings:\n{}",
         if crate::safe_mode() { " [SAFE MODE: /data/modules and config ignored]" } else { "" },
-        rd("/run/aios/modules"),
+        rd("/run/daimon/modules"),
         rd("/proc/loadavg"),
         std::thread::available_parallelism().map_or(1, |n| n.get()),
         rd("/proc/partitions"),
@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn trim_drops_oldest_turns_keeps_system() {
-        // ctx comes from defaults (32768) since /data/aios/config doesn't exist here
+        // ctx comes from defaults (32768) since /data/daimon/config doesn't exist here
         let big = "x".repeat(20_000);
         let mut m = vec![json!({"role":"system","content":"sys"})];
         for i in 0..6 {

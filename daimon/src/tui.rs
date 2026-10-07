@@ -369,7 +369,7 @@ pub fn run() {
 }
 
 /// Present = the splash already ran this boot (a restarted TUI goes straight to the console).
-const SPLASH_DONE: &str = "/run/aios/splash-done";
+const SPLASH_DONE: &str = "/run/daimon/splash-done";
 
 /// The animated boot screen, until the brain has its instructions loaded and the controller answers
 /// (or a key is pressed). Events that arrive meanwhile are kept for the console.
@@ -680,7 +680,7 @@ fn file_name(path: &str) -> String {
 
 /// "eth0 10.0.2.15/24" per configured interface, from the DHCP client's state files.
 fn ips() -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir("/run/aios")
+    let mut v: Vec<String> = fs::read_dir("/run/daimon")
         .into_iter()
         .flatten()
         .flatten()
@@ -717,7 +717,7 @@ fn read_sys(s: &mut Sys) {
     s.load = fs::read_to_string("/proc/loadavg").unwrap_or_default().split_whitespace().take(3).collect::<Vec<_>>().join(" ");
     s.uptime = fs::read_to_string("/proc/uptime").ok().and_then(|u| u.split('.').next()?.parse().ok()).unwrap_or(0);
     s.ips = ips();
-    s.modules = fs::read_to_string("/run/aios/modules")
+    s.modules = fs::read_to_string("/run/daimon/modules")
         .unwrap_or_default()
         .lines()
         .filter_map(|l| {
@@ -1263,7 +1263,7 @@ mod tests {
         }
     }
 
-    /// Draws a whole screen; AIOS_DUMP=<file> writes the cells (for tools/preview of the real pixels).
+    /// Draws a whole screen; DAIMON_DUMP=<file> writes the cells (for tools/preview of the real pixels).
     #[test]
     fn renders_controller_cards() {
         FANCY.store(true, Ordering::Relaxed);
@@ -1275,7 +1275,7 @@ mod tests {
         for want in ["Controller", "acceptance", "86%", "93%", "28%", "Needs you", "allowed", "stored: topic", "Allow this action?"] {
             assert!(text.contains(want), "missing {want}");
         }
-        if let Ok(path) = std::env::var("AIOS_DUMP") {
+        if let Ok(path) = std::env::var("DAIMON_DUMP") {
             let rgb = |c: Color, d: (u8, u8, u8)| match c {
                 Color::Rgb(r, g, b) => format!("{r},{g},{b}"),
                 _ => format!("{},{},{}", d.0, d.1, d.2),

@@ -1,4 +1,4 @@
-//! Installation work: find the disks and the boot medium, write a GPT (ESP + aios-data), copy the system,
+//! Installation work: find the disks and the boot medium, write a GPT (ESP + daimon-data), copy the system,
 //! format, download the models from Hugging Face (resumable, SHA-256 checked) and write the owner's answers.
 //! The questions are asked by setup.rs; this module only does what the plan says.
 //!
@@ -194,7 +194,7 @@ pub fn run(plan: &Plan, tx: &Sender<Progress>) -> Result<(), String> {
         step("copying the system to the EFI partition");
         copy(plan.esp_image.as_deref().ok_or("installation medium not found")?, &esp)?;
         step("formatting the data partition");
-        let out = std::process::Command::new("/usr/bin/mke2fs").args(["-q", "-F", "-t", "ext4", "-L", "aios-data", &data]).output().map_err(|e| format!("mke2fs: {e}"))?;
+        let out = std::process::Command::new("/usr/bin/mke2fs").args(["-q", "-F", "-t", "ext4", "-L", "daimon-data", &data]).output().map_err(|e| format!("mke2fs: {e}"))?;
         if !out.status.success() {
             return Err(format!("mke2fs: {}", String::from_utf8_lossy(&out.stderr).trim()));
         }
@@ -203,7 +203,7 @@ pub fn run(plan: &Plan, tx: &Sender<Progress>) -> Result<(), String> {
         }
     }
     fs::create_dir_all(MODELS).map_err(|e| e.to_string())?;
-    fs::create_dir_all("/data/aios").map_err(|e| e.to_string())?;
+    fs::create_dir_all("/data/daimon").map_err(|e| e.to_string())?;
     // controller first: it is the one every other step depends on
     for (pick, link) in [(&plan.judge, "judge.gguf"), (&plan.brain, "current.gguf")] {
         step(&format!("downloading {}", pick.file));
@@ -237,7 +237,7 @@ const BLKRRPART: libc::Ioctl = 0x125F;
 const BLKSSZGET: libc::Ioctl = 0x1268;
 const BLKGETSIZE64: libc::Ioctl = 0x8008_1272u32 as libc::Ioctl;
 
-/// Writes a fresh GPT (1 MiB gap, 64 MiB ESP, the rest aios-data) and returns the two partition devices.
+/// Writes a fresh GPT (1 MiB gap, 64 MiB ESP, the rest daimon-data) and returns the two partition devices.
 fn partition(disk: &str) -> Result<(String, String), String> {
     let dev = format!("/dev/{disk}");
     let mut f = OpenOptions::new().read(true).write(true).open(&dev).map_err(|e| format!("{dev}: {e}"))?;
@@ -300,7 +300,7 @@ fn crc32(data: &[u8]) -> u32 {
     !c
 }
 
-/// Protective MBR, primary and backup GPT with two partitions: EFI system and Linux "aios-data".
+/// Protective MBR, primary and backup GPT with two partitions: EFI system and Linux "daimon-data".
 fn write_gpt(f: &mut (impl Write + Seek), ss: u64, sectors: u64, new_guid: &dyn Fn() -> [u8; 16]) -> Result<(), String> {
     let err = |e: std::io::Error| e.to_string();
     let ent_sectors = 128 * 128 / ss;
@@ -314,7 +314,7 @@ fn write_gpt(f: &mut (impl Write + Seek), ss: u64, sectors: u64, new_guid: &dyn 
     }
     let mut ents = vec![0u8; 128 * 128];
     for (i, (ty, (a, b), name)) in
-        [("C12A7328-F81F-11D2-BA4B-00A0C93EC93B", esp, "EFI"), ("0FC63DAF-8483-4772-8E79-3D69D8477DE4", data, "aios-data")].into_iter().enumerate()
+        [("C12A7328-F81F-11D2-BA4B-00A0C93EC93B", esp, "EFI"), ("0FC63DAF-8483-4772-8E79-3D69D8477DE4", data, "daimon-data")].into_iter().enumerate()
     {
         let e = &mut ents[i * 128..(i + 1) * 128];
         e[..16].copy_from_slice(&guid(ty));
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn gpt_is_what_sfdisk_reads() {
-        let path = std::env::temp_dir().join(format!("aios-gpt-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("daimon-gpt-{}", std::process::id()));
         let sectors = (200 * MIB) / 512;
         let mut f = OpenOptions::new().create(true).read(true).write(true).truncate(true).open(&path).unwrap();
         f.set_len(sectors * 512).unwrap();
@@ -479,7 +479,7 @@ mod tests {
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert!(d.contains("label: gpt"), "{d}");
         assert!(d.contains("start=        2048, size=      131072, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B"), "{d}");
-        assert!(d.contains("start=      133120,") && d.contains("type=0FC63DAF-8483-4772-8E79-3D69D8477DE4") && d.contains("name=\"aios-data\""), "{d}");
+        assert!(d.contains("start=      133120,") && d.contains("type=0FC63DAF-8483-4772-8E79-3D69D8477DE4") && d.contains("name=\"daimon-data\""), "{d}");
     }
 
     #[test]
