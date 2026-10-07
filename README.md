@@ -214,9 +214,10 @@ Every step of the 0.x line is a minor version, all named **Deucalion**; details 
 | 0.3 | The agent as a service; the console becomes one window on it |
 | 0.4 | Daimon on the LAN: the agent, with all its rules, not the bare model |
 | 0.5 | Controller hardening: larger benchmark, fine-tuning |
-| 0.6 | Autonomy: the system reacts to its own events |
+| 0.6 | Autonomy and self-healing: it finds what is wrong or risky and fixes it, and learns from each incident |
 | 0.7 | Skills, installable from GitHub and vetted by the controller |
 | 0.8 | Signed A/B updates with rollback |
+| 0.9 | Self-improvement: it changes its own interface, behaviour and tools, every change reversible |
 | 1.0 | **Talos** |
 
 Versions follow semver; the codename changes only with the major version, after mythic matter brought to life:

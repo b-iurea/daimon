@@ -9,6 +9,9 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 - **Modular**: every component is a supervised module; none is a hard dependency for the others.
 - **The model is the system**: it can change everything on its own machine (and only there) through tools.
 - **Resilience**: everything restartable, safe mode, validated settings, rollback (future phase).
+- **It heals and improves itself, and every self-change is reversible**: the system recognises what is wrong or risky
+  and fixes it, and it can improve its own interface and behaviour; nothing it does to itself survives a failed
+  health check, and safe mode always boots without it.
 - **The brain proposes, the controller judges, the code decides**: non-negotiable rules live in code, never in a prompt.
 
 ## Name and releases
@@ -38,9 +41,10 @@ installs on real hardware, updates itself safely and runs unattended.
 | **0.3.0** | The agent as a service, the console as a window | planned |
 | **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
 | **0.5.0** | Controller hardening | planned |
-| **0.6.0** | Autonomy: the system looks after itself | planned |
+| **0.6.0** | Autonomy and self-healing: the system finds what is wrong or risky and fixes it | planned |
 | **0.7.0** | Skills, installable from GitHub | planned |
 | **0.8.0** | Signed A/B updates with rollback | planned |
+| **0.9.0** | Self-improvement: the system changes its own interface, behaviour and tools | planned |
 | **1.0.0** | **Talos** | — |
 
 Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now (paused).
@@ -65,11 +69,20 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 - Consider fine-tuning Kev-4B (or Kev-0.8B for small machines) on our own cases (`kev.train --init_from jaredpalmer/kev-0.8b`).
 - Before autonomy: with nobody at the screen, the controller is the only check.
 
-### 0.6.0 — Autonomy
-- The agent reacts to system events without anyone at the screen: a module crash-looping, disk or RAM almost full,
-  network lost, and to tasks scheduled by the owner.
-- Same rules as a request from the owner: the controller judges every action; what needs the owner waits for them
-  and is shown on every window.
+### 0.6.0 — Autonomy and self-healing
+- The agent reacts to system events without anyone at the screen, and to tasks scheduled by the owner.
+- **Health signals**, collected by code: modules crash-looping or restarting, disk / RAM / swap pressure, failed or
+  slow boots, network or DHCP lost, the brain's tokens/s and the controller's latency falling, errors in module logs,
+  settings the brain keeps failing with (context too big for the RAM, a model that doesn't load).
+- **The repair loop**: detect → diagnose (status, logs, its own memory) → propose a fix → the controller judges →
+  apply → **verify** with the same health signal → undo if it got worse → record what happened.
+- **Learning the risk factors**: every incident becomes a `system` note (symptom, cause, fix, outcome), searched by
+  symptom the next time, so known problems are recognised early and fixed the way that worked; fixes that failed are
+  remembered too. Signals that come before trouble (memory creeping up, restarts getting closer together) become
+  warnings, with action taken before the failure.
+- Same rules as a request from the owner: the controller judges every action; power, disks and anything that could
+  lock the owner out wait for the owner and are shown on every window. Autonomous actions are rate-limited and listed
+  in the changelog as "by the agent, on its own".
 
 ### 0.7.0 — Skills
 - Define what a skill is in Daimon (instructions + optional files, a manifest), how the agent loads it, what it may do.
@@ -79,6 +92,20 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 ### 0.8.0 — Signed A/B updates
 - Signed A/B updates of the OS, the inference engine and skills, with automatic rollback when the new version does not
   come up.
+
+### 0.9.0 — Self-improvement
+- The system improves itself on its own initiative or when the owner asks ("make the sidebar show the temperature",
+  "you answer too slowly, do something"):
+  - **interface**: theme, layout and panels of the console become data the agent can edit (a theme file and a
+    layout description), applied live;
+  - **behaviour**: its own instructions and the skills it writes for itself (0.7 format);
+  - **tools and reactions**: new tools, panels and event handlers as small programs in a sandboxed runtime shipped
+    with the OS (WASM or an embedded script engine: no compiler on the box), with limited permissions.
+- The core (`aios`, the kernel, the controller's rules) stays signed and fixed: changing it is an update (0.8).
+- **Every self-change is staged and reversible**: proposed with a diff → judged by the controller → tried in a
+  sandbox or a second console → shown to the owner → activated → health-checked, rolled back automatically if worse,
+  kept in the changelog with the reason. Safe mode boots without any self-made change.
+- Needs 0.6 (health signals to tell better from worse), 0.7 (skill format) and 0.8 (rollback).
 
 ## Done
 
