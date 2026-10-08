@@ -22,7 +22,7 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 
 | Versions | Codename | |
 |---|---|---|
-| **0.x** (current: 0.1.0) | **Deucalion** | stones thrown over the shoulder become people; development phase |
+| **0.x** (current: 0.2.1) | **Deucalion** | stones thrown over the shoulder become people; development phase |
 | 1.x | Talos | the bronze automaton forged by Hephaestus; first stable release |
 | 2.x | Galatea | the statue that comes to life |
 | 3.x | Pandora | shaped from clay by Hephaestus |
@@ -40,7 +40,7 @@ installs on real hardware, updates itself safely and runs unattended.
 | **0.1.0** | Foundation: boot, agent, console, memory, controller, splash | ✅ released 2026-10-07 (`v0.1.0`) |
 | **0.2.0** | Installable: ISO installer, model download, resilient console, system changes in memory, `/` completion | ✅ released 2026-10-08 (`v0.2.0`) |
 | **0.2.1** | One name: `aios` → `daimon` inside too, old installs migrated | ✅ released 2026-10-08 (`v0.2.1`) |
-| **0.3.0** | The agent as a service, the console as a window | planned |
+| **0.3.0** | The agent as a service, the console as a window | in progress (`feature/0.3.0-agent-service`) |
 | **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
 | **0.5.0** | Controller hardening | planned |
 | **0.6.0** | Autonomy and self-healing: the system finds what is wrong or risky and fixes it | planned |
@@ -59,6 +59,19 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
 - A console freeze or restart no longer interrupts an action halfway (a multi-step change completes); the
   conversation survives too.
 - A pending confirmation no longer blocks everything: timeout = "no".
+
+Done so far:
+- ✅ Module `agent` (`daimon agent [socket]`, `daimon/src/link.rs`): the agent loop serves `/run/daimon/agent.sock`,
+  one JSON object per line. In: `{"prompt"}`, `{"confirm"}`, `{"reset"}`, `{"cancel"}`. Out: every event
+  (`{"ev":"user|think|text|tool|tool_out|info|confirm|answered|ctx|progress|judging|judge|done|err|ready|sync"}`).
+- ✅ The conversation lives in the agent: a window that connects gets `sync` + every event since the last `/new`
+  (live-only `progress` left out), then the live flow. A window that can't keep up (1 s) is dropped and reconnects.
+- ✅ The TUI is a client (`link::Link`, reconnects on its own; header shows "agent offline"). Prompts appear when the
+  agent takes them (`user` event), in every window; a confirmation can be answered from any window (`answered`).
+- ✅ Confirmation timeout: no answer in 120 s (`agent::CONFIRM_TIMEOUT`) or a cancel = "no".
+- ✅ CI (`.github/workflows/ci.yml`: fmt, unit tests, musl build) and acceptance (`acceptance.yml`: real
+  `daimon agent` + llama-server + MiniCPM5 2B driven by `tests/acceptance.py`, after the owner's approval through the
+  `acceptance` environment). Locally: `tests/acceptance.py daimon/target/release/daimon <llama-server> <brain.gguf>`.
 
 ### 0.4.0 — Daimon on the LAN
 - Today `:8080` is the bare brain: no tools, no memory, no controller. Expose **the agent** instead, OpenAI-compatible
@@ -299,7 +312,7 @@ bench when adding cases or switching model.
 - Installer: UEFI only (no legacy BIOS), Secure Boot off, uses the whole disk (no dual boot). The ISO's ESP is a
   64 MB FAT image, mostly empty (room for A/B kernels later).
 - The RAM rule for models is a rule of thumb from file sizes; a big context on a big model can still run out.
-- Until 0.3.0, agent and TUI share one process: a console restart starts a new conversation; a pending confirmation blocks the agent until answered.
+- Prompts sent while a confirmation is pending are dropped (answer first). The replay keeps the last 50k events.
 - Context tokens estimated as chars/3; the memory index is injected whole into the prompt.
 - DHCP renewal = full DORA at half lease. Module logs are not rotated (tmpfs).
 - The thinking budget applies per step; multi-step turns can still reason at length.

@@ -364,16 +364,18 @@ fn draw(f: &mut Frame, s: &Setup, net: &[String]) {
         Step::Welcome => {
             l.push(head("Welcome. This is an operating system where the model is the system."));
             l.push(Line::raw(""));
-            l.extend(wrap(
-                if s.full {
-                    "A few questions, then Daimon installs itself on a disk of this machine and downloads its brain and its controller from Hugging Face."
-                } else {
-                    "A few questions, then Daimon downloads its brain and its controller from Hugging Face."
-                },
-                width,
-            )
-            .into_iter()
-            .map(dim));
+            l.extend(
+                wrap(
+                    if s.full {
+                        "A few questions, then Daimon installs itself on a disk of this machine and downloads its brain and its controller from Hugging Face."
+                    } else {
+                        "A few questions, then Daimon downloads its brain and its controller from Hugging Face."
+                    },
+                    width,
+                )
+                .into_iter()
+                .map(dim),
+            );
             l.push(Line::raw(""));
             let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
             l.push(Line::from(vec![Span::styled("  memory   ", fg(FAINT)), Span::styled(gb(s.ram), fg(TEXT))]));
@@ -500,7 +502,10 @@ fn draw(f: &mut Frame, s: &Setup, net: &[String]) {
             l.push(kv("download", if total > JUDGES[s.judge].bytes { gb(total) } else { format!("{} + your model", gb(total)) }));
             l.push(Line::raw(""));
             if s.full {
-                l.push(Line::from(Span::styled(format!("  Everything on /dev/{} will be erased.", s.disks.get(s.disk).map_or("?", |d| d.name.as_str())), fg(RED).add_modifier(Modifier::BOLD))));
+                l.push(Line::from(Span::styled(
+                    format!("  Everything on /dev/{} will be erased.", s.disks.get(s.disk).map_or("?", |d| d.name.as_str())),
+                    fg(RED).add_modifier(Modifier::BOLD),
+                )));
                 l.push(dim("  Type erase to continue:".into()));
                 l.push(field(&s.confirm, s.tick));
                 keys_hint = "type erase, then Enter  ·  Esc back";
@@ -509,7 +514,13 @@ fn draw(f: &mut Frame, s: &Setup, net: &[String]) {
             }
         }
         Step::Work | Step::Done => {
-            l.push(head(if s.step == Step::Done { "Done" } else if s.error.is_some() { "Stopped" } else { "Installing" }));
+            l.push(head(if s.step == Step::Done {
+                "Done"
+            } else if s.error.is_some() {
+                "Stopped"
+            } else {
+                "Installing"
+            }));
             l.push(Line::raw(""));
             let n = s.done.len();
             for (i, d) in s.done.iter().enumerate() {

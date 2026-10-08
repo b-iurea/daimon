@@ -1,0 +1,54 @@
+# Acceptance: the real `daimon agent` with a real brain (llama-server + MiniCPM5 2B), driven over its socket by
+# tests/acceptance.py. Heavy (a 1.5 GB model, minutes of CPU inference), so every run waits for the owner's approval:
+# the job uses the `acceptance` environment, whose required reviewer is the owner (Settings > Environments).
+name: acceptance
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # needs /v1/systemone (ggml-org/llama.cpp#29818); same commit as the image
+  LLAMA_COMMIT: 2ca15f5404760548c39e7b92bd43116a09414a1a
+  BRAIN: MiniCPM5-2B-Q4_K_M.gguf
+  BRAIN_URL: https://huggingface.co/openbmb/MiniCPM5-2B-GGUF/resolve/main/MiniCPM5-2B-Q4_K_M.gguf
+
+jobs:
+  agent:
+    runs-on: ubuntu-24.04
+    environment: acceptance
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: daimon
+      - run: cargo build --release --manifest-path daimon/Cargo.toml
+
+      - name: llama-server (cached per commit)
+        id: llama
+        uses: actions/cache@v4
+        with:
+          path: llama-server
+          key: llama-server-${{ env.LLAMA_COMMIT }}-avx2
+      - if: steps.llama.outputs.cache-hit != 'true'
+        run: |
+          git init -q llama.cpp && cd llama.cpp
+          git fetch -q --depth 1 https://github.com/ggml-org/llama.cpp "$LLAMA_COMMIT" && git checkout -q FETCH_HEAD
+          # like build/llama.cpp/build-cpu: static, AVX2, no -march=native (the cache may land on another CPU)
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DLLAMA_OPENSSL=OFF
+          cmake --build build --target llama-server -j"$(nproc)"
+          cp build/bin/llama-server ..
+
+      - name: Brain model (cached)
+        id: model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BRAIN }}
+          key: model-${{ env.BRAIN }}
+      - if: steps.model.outputs.cache-hit != 'true'
+        run: curl -sSfL --retry 5 -o "$BRAIN" "$BRAIN_URL"
+
+      - name: Acceptance (tests/acceptance.py)
+        run: python3 tests/acceptance.py daimon/target/release/daimon ./llama-server "$BRAIN"
