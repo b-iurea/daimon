@@ -4,7 +4,7 @@
 
 **An operating system where the language model *is* the system.**
 
-[![version](https://img.shields.io/badge/version-0.2.1-22c55e?style=flat-square)](PLAN.md#roadmap--0x-deucalion)
+[![version](https://img.shields.io/badge/version-0.3.0-22c55e?style=flat-square)](PLAN.md#roadmap--0x-deucalion)
 [![codename](https://img.shields.io/badge/codename-Deucalion-38bdf8?style=flat-square)](PLAN.md#name-and-releases)
 [![ISO](https://img.shields.io/badge/ISO-67_MB-f59e0b?style=flat-square)](#install)
 [![OS](https://img.shields.io/badge/OS-25_MB-f59e0b?style=flat-square)](#size)
@@ -190,7 +190,8 @@ For the dev image, put a brain and a controller in `build/data/models/` as `curr
 Tests: `cargo test` in `daimon/`. Acceptance (the real agent and brain over the socket, a few minutes on CPU):
 `tests/acceptance.py daimon/target/release/daimon build/llama.cpp/build-cpu/bin/llama-server <brain.gguf>`.
 On GitHub, `ci` runs on every push; `acceptance` runs on pull requests to `main` once the owner approves it.
-Releases: bump `version` in `daimon/Cargo.toml` in a PR and write the release notes as its description; merging it
+Releases: bump `version` in `daimon/Cargo.toml` in a PR, with the README (badge, sizes, features) and PLAN.md updated
+(`ci` fails if the badge or PLAN's "current" don't match), and write the release notes as its description; merging it
 builds the ISO and publishes release `v<version>` (`release.yml`).
 
 ### Layout
