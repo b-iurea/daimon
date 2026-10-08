@@ -74,7 +74,8 @@ Done:
   `acceptance` environment). Locally: `tests/acceptance.py daimon/target/release/daimon <llama-server> <brain.gguf>`.
 - ✅ Release on merge (`release.yml`): `main` gets a version with no release yet → `./build.sh iso` and release
   `v<version>` with the ISO + sha256, the merged PR's description as the notes. A PR that bumps the version builds
-  the ISO without publishing it. `main` is protected: `ci` and `acceptance` are required, changes go through PRs.
+  the ISO and keeps it (artifact named after the git tree); the merge publishes that same ISO when the tree matches,
+  otherwise it builds again. `main` is protected: `ci` and `acceptance` are required, changes go through PRs.
 
 ### 0.4.0 — Daimon on the LAN
 - Today `:8080` is the bare brain: no tools, no memory, no controller. Expose **the agent** instead, OpenAI-compatible
