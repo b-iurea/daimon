@@ -15,6 +15,7 @@ env:
 
 jobs:
   agent:
+    name: acceptance
     runs-on: ubuntu-24.04
     environment: acceptance
     timeout-minutes: 60
