@@ -167,11 +167,9 @@ python3 with Pillow, `ckbcomp` (console-setup), `mtools`, `dosfstools`, `e2fspro
 # Linux 6.18 LTS into build/linux-6.18.55
 curl -L https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.55.tar.xz | tar xJ -C build
 
-# llama.cpp, static, CPU with AVX2, into build/llama.cpp/build-cpu
-git clone https://github.com/ggml-org/llama.cpp build/llama.cpp
-cmake -S build/llama.cpp -B build/llama.cpp/build-cpu -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-  -DCMAKE_EXE_LINKER_FLAGS=-static -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DLLAMA_OPENSSL=OFF
-cmake --build build/llama.cpp/build-cpu --target llama-server -j
+# llama-server, static, CPU with AVX2 (the commit pinned in the workflows: it has /v1/systemone)
+mkdir -p build/llama.cpp/build-cpu/bin
+tools/build-llama.sh 2ca15f5404760548c39e7b92bd43116a09414a1a build/llama.cpp/build-cpu/bin/llama-server
 ```
 
 Then:
