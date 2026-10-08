@@ -32,15 +32,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: llama-server
-          key: llama-server-${{ env.LLAMA_COMMIT }}-avx2
+          key: llama-server-${{ env.LLAMA_COMMIT }}-static-avx2
       - if: steps.llama.outputs.cache-hit != 'true'
-        run: |
-          git init -q llama.cpp && cd llama.cpp
-          git fetch -q --depth 1 https://github.com/ggml-org/llama.cpp "$LLAMA_COMMIT" && git checkout -q FETCH_HEAD
-          # like build/llama.cpp/build-cpu: static, AVX2, no -march=native (the cache may land on another CPU)
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DLLAMA_OPENSSL=OFF
-          cmake --build build --target llama-server -j"$(nproc)"
-          cp build/bin/llama-server ..
+        run: tools/build-llama.sh "$LLAMA_COMMIT" llama-server
 
       - name: Brain model (cached)
         id: model

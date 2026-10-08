@@ -190,6 +190,8 @@ For the dev image, put a brain and a controller in `build/data/models/` as `curr
 Tests: `cargo test` in `daimon/`. Acceptance (the real agent and brain over the socket, a few minutes on CPU):
 `tests/acceptance.py daimon/target/release/daimon build/llama.cpp/build-cpu/bin/llama-server <brain.gguf>`.
 On GitHub, `ci` runs on every push; `acceptance` runs on pull requests to `main` once the owner approves it.
+Releases: bump `version` in `daimon/Cargo.toml` in a PR and write the release notes as its description; merging it
+builds the ISO and publishes release `v<version>` (`release.yml`).
 
 ### Layout
 
@@ -204,7 +206,7 @@ daimon/src/      main.rs     PID 1: mounts, supervisor, watchdog, Ctrl+Alt+Del
                config.rs   settings table;  net.rs  DHCP client, hostname
 tests/         acceptance test (agent + brain over the socket)
 bench/         controller benchmark (notes and actions) and its raw results
-tools/         build-time generators: fonts, keymaps, wordmark
+tools/         build-time generators: fonts, keymaps, wordmark; build-llama.sh (llama-server for the workflows)
 kernel/        kernel config fragment
 build.sh       everything else
 ```

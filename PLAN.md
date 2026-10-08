@@ -22,7 +22,7 @@ A minimal x86_64 operating system where the LLM **is** the system. Linux kernel,
 
 | Versions | Codename | |
 |---|---|---|
-| **0.x** (current: 0.2.1) | **Deucalion** | stones thrown over the shoulder become people; development phase |
+| **0.x** (current: 0.3.0) | **Deucalion** | stones thrown over the shoulder become people; development phase |
 | 1.x | Talos | the bronze automaton forged by Hephaestus; first stable release |
 | 2.x | Galatea | the statue that comes to life |
 | 3.x | Pandora | shaped from clay by Hephaestus |
@@ -40,7 +40,7 @@ installs on real hardware, updates itself safely and runs unattended.
 | **0.1.0** | Foundation: boot, agent, console, memory, controller, splash | ✅ released 2026-10-07 (`v0.1.0`) |
 | **0.2.0** | Installable: ISO installer, model download, resilient console, system changes in memory, `/` completion | ✅ released 2026-10-08 (`v0.2.0`) |
 | **0.2.1** | One name: `aios` → `daimon` inside too, old installs migrated | ✅ released 2026-10-08 (`v0.2.1`) |
-| **0.3.0** | The agent as a service, the console as a window | in progress (`feature/0.3.0-agent-service`) |
+| **0.3.0** | The agent as a service, the console as a window | ✅ released on merge (`v0.3.0`) |
 | **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
 | **0.5.0** | Controller hardening | planned |
 | **0.6.0** | Autonomy and self-healing: the system finds what is wrong or risky and fixes it | planned |
@@ -60,7 +60,7 @@ Unscheduled: GPU drivers, NVIDIA (CUDA) and AMD (Vulkan/RADV); CPU only for now 
   conversation survives too.
 - A pending confirmation no longer blocks everything: timeout = "no".
 
-Done so far:
+Done:
 - ✅ Module `agent` (`daimon agent [socket]`, `daimon/src/link.rs`): the agent loop serves `/run/daimon/agent.sock`,
   one JSON object per line. In: `{"prompt"}`, `{"confirm"}`, `{"reset"}`, `{"cancel"}`. Out: every event
   (`{"ev":"user|think|text|tool|tool_out|info|confirm|answered|ctx|progress|judging|judge|done|err|ready|sync"}`).
@@ -72,6 +72,9 @@ Done so far:
 - ✅ CI (`.github/workflows/ci.yml`: fmt, unit tests, musl build) and acceptance (`acceptance.yml`: real
   `daimon agent` + llama-server + MiniCPM5 2B driven by `tests/acceptance.py`, after the owner's approval through the
   `acceptance` environment). Locally: `tests/acceptance.py daimon/target/release/daimon <llama-server> <brain.gguf>`.
+- ✅ Release on merge (`release.yml`): `main` gets a version with no release yet → `./build.sh iso` and release
+  `v<version>` with the ISO + sha256, the merged PR's description as the notes. A PR that bumps the version builds
+  the ISO without publishing it. `main` is protected: `ci` and `acceptance` are required, changes go through PRs.
 
 ### 0.4.0 — Daimon on the LAN
 - Today `:8080` is the bare brain: no tools, no memory, no controller. Expose **the agent** instead, OpenAI-compatible
