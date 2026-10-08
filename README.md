@@ -4,7 +4,7 @@
 
 **An operating system where the language model *is* the system.**
 
-[![version](https://img.shields.io/badge/version-0.2.1-22c55e?style=flat-square)](PLAN.md#roadmap--0x-deucalion)
+[![version](https://img.shields.io/badge/version-0.3.0-22c55e?style=flat-square)](PLAN.md#roadmap--0x-deucalion)
 [![codename](https://img.shields.io/badge/codename-Deucalion-38bdf8?style=flat-square)](PLAN.md#name-and-releases)
 [![ISO](https://img.shields.io/badge/ISO-67_MB-f59e0b?style=flat-square)](#install)
 [![OS](https://img.shields.io/badge/OS-25_MB-f59e0b?style=flat-square)](#size)
@@ -167,11 +167,9 @@ python3 with Pillow, `ckbcomp` (console-setup), `mtools`, `dosfstools`, `e2fspro
 # Linux 6.18 LTS into build/linux-6.18.55
 curl -L https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.55.tar.xz | tar xJ -C build
 
-# llama.cpp, static, CPU with AVX2, into build/llama.cpp/build-cpu
-git clone https://github.com/ggml-org/llama.cpp build/llama.cpp
-cmake -S build/llama.cpp -B build/llama.cpp/build-cpu -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-  -DCMAKE_EXE_LINKER_FLAGS=-static -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DLLAMA_OPENSSL=OFF
-cmake --build build/llama.cpp/build-cpu --target llama-server -j
+# llama-server, static, CPU with AVX2 (the commit pinned in the workflows: it has /v1/systemone)
+mkdir -p build/llama.cpp/build-cpu/bin
+tools/build-llama.sh 2ca15f5404760548c39e7b92bd43116a09414a1a build/llama.cpp/build-cpu/bin/llama-server
 ```
 
 Then:
@@ -190,6 +188,9 @@ For the dev image, put a brain and a controller in `build/data/models/` as `curr
 Tests: `cargo test` in `daimon/`. Acceptance (the real agent and brain over the socket, a few minutes on CPU):
 `tests/acceptance.py daimon/target/release/daimon build/llama.cpp/build-cpu/bin/llama-server <brain.gguf>`.
 On GitHub, `ci` runs on every push; `acceptance` runs on pull requests to `main` once the owner approves it.
+Releases: bump `version` in `daimon/Cargo.toml` in a PR, with the README (badge, sizes, features) and PLAN.md updated
+(`ci` fails if the badge or PLAN's "current" don't match), and write the release notes as its description; merging it
+builds the ISO and publishes release `v<version>` (`release.yml`).
 
 ### Layout
 
@@ -204,7 +205,7 @@ daimon/src/      main.rs     PID 1: mounts, supervisor, watchdog, Ctrl+Alt+Del
                config.rs   settings table;  net.rs  DHCP client, hostname
 tests/         acceptance test (agent + brain over the socket)
 bench/         controller benchmark (notes and actions) and its raw results
-tools/         build-time generators: fonts, keymaps, wordmark
+tools/         build-time generators: fonts, keymaps, wordmark; build-llama.sh (llama-server for the workflows)
 kernel/        kernel config fragment
 build.sh       everything else
 ```

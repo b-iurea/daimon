@@ -1,0 +1,83 @@
+# Release on merge: when main gets a version (daimon/Cargo.toml) that has no GitHub release yet, build the installer
+# ISO with ./build.sh iso and publish it as release v<version>, tagged on the merge commit. The release notes are the
+# description of the merged PR. A merge that doesn't bump the version releases nothing.
+# On a PR that bumps the version the ISO is built too, but not published: a broken build shows before the merge.
+name: release
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  LLAMA_COMMIT: 2ca15f5404760548c39e7b92bd43116a09414a1a
+  KERNEL: linux-6.18.55
+
+jobs:
+  iso:
+    name: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: v
+        run: |
+          V=$(sed -n 's/^version = "\(.*\)"/\1/p' daimon/Cargo.toml)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" >/dev/null 2>&1; then echo "v$V is already released, nothing to do"; echo "new=false" >> "$GITHUB_OUTPUT"
+          else echo "new=true" >> "$GITHUB_OUTPUT"; fi
+
+      - if: steps.v.outputs.new == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - if: steps.v.outputs.new == 'true'
+        name: Build tools
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq musl-tools flex bison bc libelf-dev libssl-dev \
+            dosfstools mtools python3-pil console-setup xkb-data fonts-dejavu-mono fonts-urw-base35
+
+      - if: steps.v.outputs.new == 'true'
+        name: llama-server (cached per commit)
+        id: llama
+        uses: actions/cache@v4
+        with:
+          path: llama-server
+          key: llama-server-${{ env.LLAMA_COMMIT }}-static-avx2
+      - if: steps.v.outputs.new == 'true' && steps.llama.outputs.cache-hit != 'true'
+        run: tools/build-llama.sh "$LLAMA_COMMIT" llama-server
+
+      - if: steps.v.outputs.new == 'true'
+        name: Kernel source (cached)
+        id: kernel
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.KERNEL }}.tar.xz
+          key: ${{ env.KERNEL }}
+      - if: steps.v.outputs.new == 'true' && steps.kernel.outputs.cache-hit != 'true'
+        run: curl -sSfL --retry 5 -O "https://cdn.kernel.org/pub/linux/kernel/v6.x/$KERNEL.tar.xz"
+
+      - if: steps.v.outputs.new == 'true'
+        name: ISO (./build.sh iso)
+        run: |
+          mkdir -p build/llama.cpp/build-cpu/bin && cp llama-server build/llama.cpp/build-cpu/bin/
+          tar xJf "$KERNEL.tar.xz" -C build
+          ./build.sh iso
+          cd out && sha256sum "daimon-${{ steps.v.outputs.version }}.iso" > "daimon-${{ steps.v.outputs.version }}.iso.sha256"
+
+      - if: steps.v.outputs.new == 'true' && github.event_name == 'push'
+        name: Publish
+        run: |
+          V=${{ steps.v.outputs.version }}
+          case "${V%%.*}" in 0) NAME=Deucalion ;; 1) NAME=Talos ;; 2) NAME=Galatea ;; 3) NAME=Pandora ;; *) NAME=Prometheus ;; esac
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].body // ""' > notes.md
+          [ -s notes.md ] || echo "Daimon $V" > notes.md
+          gh release create "v$V" --target "$GITHUB_SHA" --title "Daimon $V \"$NAME\"" --notes-file notes.md \
+            "out/daimon-$V.iso" "out/daimon-$V.iso.sha256"
