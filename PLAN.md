@@ -40,7 +40,7 @@ installs on real hardware, updates itself safely and runs unattended.
 | **0.1.0** | Foundation: boot, agent, console, memory, controller, splash | ✅ released 2026-10-07 (`v0.1.0`) |
 | **0.2.0** | Installable: ISO installer, model download, resilient console, system changes in memory, `/` completion | ✅ released 2026-10-08 (`v0.2.0`) |
 | **0.2.1** | One name: `aios` → `daimon` inside too, old installs migrated | ✅ released 2026-10-08 (`v0.2.1`) |
-| **0.3.0** | The agent as a service, the console as a window | ✅ released on merge (`v0.3.0`) |
+| **0.3.0** | The agent as a service, the console as a window | ✅ released 2026-10-08 (`v0.3.0`) |
 | **0.4.0** | Daimon on the LAN: the agent, not the bare model | planned |
 | **0.5.0** | Controller hardening | planned |
 | **0.6.0** | Autonomy and self-healing: the system finds what is wrong or risky and fixes it | planned |
@@ -74,7 +74,8 @@ Done:
   `acceptance` environment). Locally: `tests/acceptance.py daimon/target/release/daimon <llama-server> <brain.gguf>`.
 - ✅ Release on merge (`release.yml`): `main` gets a version with no release yet → `./build.sh iso` and release
   `v<version>` with the ISO + sha256, the merged PR's description as the notes. A PR that bumps the version builds
-  the ISO without publishing it. `main` is protected: `ci` and `acceptance` are required, changes go through PRs.
+  the ISO and keeps it (artifact named after the git tree); the merge publishes that same ISO when the tree matches,
+  otherwise it builds again. `main` is protected: `ci` and `acceptance` are required, changes go through PRs.
 
 ### 0.4.0 — Daimon on the LAN
 - Today `:8080` is the bare brain: no tools, no memory, no controller. Expose **the agent** instead, OpenAI-compatible

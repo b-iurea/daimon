@@ -189,7 +189,7 @@ Tests: `cargo test` in `daimon/`. Acceptance (the real agent and brain over the 
 `tests/acceptance.py daimon/target/release/daimon build/llama.cpp/build-cpu/bin/llama-server <brain.gguf>`.
 On GitHub, `ci` runs on every push; `acceptance` runs on pull requests to `main` once the owner approves it.
 Releases: bump `version` in `daimon/Cargo.toml` in a PR, with the README (badge, sizes, features) and PLAN.md updated
-(`ci` fails if the badge or PLAN's "current" don't match), and write the release notes as its description; merging it
+(`ci` fails if the badge, PLAN's "current" or the ✅ on the roadmap rows in README and PLAN don't match), and write the release notes as its description; merging it
 builds the ISO and publishes release `v<version>` (`release.yml`).
 
 ### Layout
@@ -218,7 +218,7 @@ Every step of the 0.x line is a minor version, all named **Deucalion**; details 
 |---|---|
 | 0.1 ✅ | Foundation: boot, agent, console, memory, controller, splash |
 | 0.2 ✅ | Installable: ISO installer and model download, resilient console, system changes in memory, `/` completion |
-| 0.3 | The agent as a service; the console becomes one window on it |
+| 0.3 ✅ | The agent as a service; the console becomes one window on it |
 | 0.4 | Daimon on the LAN: the agent, with all its rules, not the bare model |
 | 0.5 | Controller hardening: larger benchmark, fine-tuning |
 | 0.6 | Autonomy and self-healing: it finds what is wrong or risky and fixes it, and learns from each incident |

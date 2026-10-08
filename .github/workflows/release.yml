@@ -1,7 +1,9 @@
 # Release on merge: when main gets a version (daimon/Cargo.toml) that has no GitHub release yet, build the installer
 # ISO with ./build.sh iso and publish it as release v<version>, tagged on the merge commit. The release notes are the
 # description of the merged PR. A merge that doesn't bump the version releases nothing.
-# On a PR that bumps the version the ISO is built too, but not published: a broken build shows before the merge.
+# On a PR that bumps the version the ISO is built and kept as an artifact named after the git tree it was built from
+# (the PR merged into main). The merge reuses it when it has that same tree, otherwise it builds again. Not published
+# from a PR; a failed check blocks the merge, and the artifact just expires.
 name: release
 on:
   push:
@@ -11,6 +13,11 @@ on:
 
 permissions:
   contents: write
+  actions: read
+
+concurrency: # a new push to the PR cancels its build in progress; main runs one after the other
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   LLAMA_COMMIT: 2ca15f5404760548c39e7b92bd43116a09414a1a
@@ -30,47 +37,65 @@ jobs:
         run: |
           V=$(sed -n 's/^version = "\(.*\)"/\1/p' daimon/Cargo.toml)
           echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
           if gh release view "v$V" >/dev/null 2>&1; then echo "v$V is already released, nothing to do"; echo "new=false" >> "$GITHUB_OUTPUT"
           else echo "new=true" >> "$GITHUB_OUTPUT"; fi
 
-      - if: steps.v.outputs.new == 'true'
+      - if: steps.v.outputs.new == 'true' && github.event_name == 'push'
+        name: Reuse the PR's ISO (same tree)
+        id: reuse
+        run: |
+          V=${{ steps.v.outputs.version }}; A=iso-${{ steps.v.outputs.tree }}
+          RUN=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$A" --jq '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty')
+          if [ -n "$RUN" ] && gh run download "$RUN" -n "$A" -D out && (cd out && sha256sum -c "daimon-$V.iso.sha256"); then
+            echo "reused the ISO of run $RUN"; echo "hit=true" >> "$GITHUB_OUTPUT"
+          else echo "no ISO built from this tree, building"; fi
+
+      - if: steps.v.outputs.new == 'true' && steps.reuse.outputs.hit != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
-      - if: steps.v.outputs.new == 'true'
+      - if: steps.v.outputs.new == 'true' && steps.reuse.outputs.hit != 'true'
         name: Build tools
         run: |
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq musl-tools flex bison bc libelf-dev libssl-dev \
             dosfstools mtools python3-pil console-setup xkb-data fonts-dejavu-mono fonts-urw-base35
 
-      - if: steps.v.outputs.new == 'true'
+      - if: steps.v.outputs.new == 'true' && steps.reuse.outputs.hit != 'true'
         name: llama-server (cached per commit)
         id: llama
         uses: actions/cache@v4
         with:
           path: llama-server
           key: llama-server-${{ env.LLAMA_COMMIT }}-static-avx2
-      - if: steps.v.outputs.new == 'true' && steps.llama.outputs.cache-hit != 'true'
+      - if: steps.v.outputs.new == 'true' && steps.reuse.outputs.hit != 'true' && steps.llama.outputs.cache-hit != 'true'
         run: tools/build-llama.sh "$LLAMA_COMMIT" llama-server
 
-      - if: steps.v.outputs.new == 'true'
+      - if: steps.v.outputs.new == 'true' && steps.reuse.outputs.hit != 'true'
         name: Kernel source (cached)
         id: kernel
         uses: actions/cache@v4
         with:
           path: ${{ env.KERNEL }}.tar.xz
           key: ${{ env.KERNEL }}
-      - if: steps.v.outputs.new == 'true' && steps.kernel.outputs.cache-hit != 'true'
+      - if: steps.v.outputs.new == 'true' && steps.reuse.outputs.hit != 'true' && steps.kernel.outputs.cache-hit != 'true'
         run: curl -sSfL --retry 5 -O "https://cdn.kernel.org/pub/linux/kernel/v6.x/$KERNEL.tar.xz"
 
-      - if: steps.v.outputs.new == 'true'
+      - if: steps.v.outputs.new == 'true' && steps.reuse.outputs.hit != 'true'
         name: ISO (./build.sh iso)
         run: |
           mkdir -p build/llama.cpp/build-cpu/bin && cp llama-server build/llama.cpp/build-cpu/bin/
           tar xJf "$KERNEL.tar.xz" -C build
           ./build.sh iso
           cd out && sha256sum "daimon-${{ steps.v.outputs.version }}.iso" > "daimon-${{ steps.v.outputs.version }}.iso.sha256"
+      - if: steps.v.outputs.new == 'true' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-${{ steps.v.outputs.tree }}
+          path: out/daimon-${{ steps.v.outputs.version }}.iso*
+          compression-level: 0
+          retention-days: 30
 
       - if: steps.v.outputs.new == 'true' && github.event_name == 'push'
         name: Publish
