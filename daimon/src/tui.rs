@@ -1,10 +1,12 @@
 //! The face of the system on tty1: the conversation with the agent (left) and the machine (right).
+//! A window onto the `agent` module (link.rs): restarting the console doesn't touch the agent or the conversation.
 //! On a framebuffer it paints itself (fb.rs: 24-bit colour, anti-aliased font, icons); without one it
 //! falls back to the text console with plain glyphs.
 
 use crate::agent::{self, Cmd, Ev};
 use crate::config;
 use crate::judge::Report;
+use crate::link::Link;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -14,9 +16,8 @@ use ratatui::widgets::{Block, BorderType, Paragraph, Sparkline};
 use ratatui::{Frame, Terminal};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
 #[path = "setup.rs"]
@@ -168,7 +169,7 @@ enum Entry {
     Err(String),
     /// the controller handed the decision to the owner
     Ask(String),
-    Judging(&'static str, String, Instant),
+    Judging(String, String, Instant),
     Judge(Report),
 }
 
@@ -220,6 +221,8 @@ struct App {
     font: String,
     /// brain warm-up finished: Some(ok)
     warm: Option<bool>,
+    /// connected to the agent module
+    agent_up: bool,
     /// selected row of the "/" completion popup; hidden with Esc until the input changes
     pick: usize,
     pop_hidden: bool,
@@ -247,6 +250,22 @@ impl App {
     fn on_event(&mut self, e: Ev) {
         self.progress = None;
         match e {
+            // a new conversation, or the replay of the current one to a (re)connected console
+            Ev::Sync => {
+                self.log = vec![welcome()];
+                self.busy = false;
+                self.confirm = None;
+                self.scroll = 0;
+            }
+            Ev::User(s) => {
+                self.push(Entry::User(s));
+                self.busy = true;
+                self.scroll = 0;
+            }
+            Ev::Answered(yes) => {
+                self.confirm = None;
+                self.push(Entry::Info(if yes { "allowed by the owner" } else { "denied" }.into()));
+            }
             Ev::Progress(d, t) => self.progress = Some((d, t)),
             Ev::Think(s) => self.push(Entry::Think(s)),
             Ev::Text(s) => self.push(Entry::Text(s)),
@@ -263,6 +282,7 @@ impl App {
             Ev::Err(s) => {
                 self.push(Entry::Err(s));
                 self.busy = false;
+                self.confirm = None;
             }
             Ev::Done(t) => {
                 self.tok_s = t;
@@ -277,7 +297,7 @@ impl App {
                 }
                 let n = (self.judge.allowed + self.judge.blocked) as f64;
                 self.judge.secs += (r.secs - self.judge.secs) / n;
-                self.judge.last = Some((r.kind.into(), r.score, r.allowed));
+                self.judge.last = Some((r.kind.clone(), r.score, r.allowed));
                 // the report replaces its "judging..." placeholder
                 match self.log.iter().rposition(|e| matches!(e, Entry::Judging(..))) {
                     Some(i) => self.log[i] = Entry::Judge(r),
@@ -290,13 +310,16 @@ impl App {
 
 // ---------------------------------------------------------------- main loop
 
+fn welcome() -> Entry {
+    Entry::Info("I am the system. Ask me anything about my state, modules, logs or settings. /help lists console commands.".into())
+}
+
 pub fn run() {
-    let cancel = Arc::new(AtomicBool::new(false));
     let (ev_tx, ev_rx) = channel();
-    let prompts = agent::spawn(ev_tx, cancel.clone());
+    let prompts = Link::connect(crate::link::SOCK, ev_tx);
     let llm_rx = llm_poller();
     let mut app = App {
-        log: vec![Entry::Info("I am the system. Ask me anything about my state, modules, logs or settings. /help lists console commands.".into())],
+        log: vec![welcome()],
         input: String::new(),
         busy: false,
         scroll: 0,
@@ -316,6 +339,7 @@ pub fn run() {
         tick: 0,
         font: String::new(),
         warm: None,
+        agent_up: false,
         pick: 0,
         pop_hidden: false,
     };
@@ -339,7 +363,7 @@ pub fn run() {
                     setup::run(&mut term, ips);
                     let _ = prompts.send(Cmd::Reset);
                 }
-                ui_loop(&mut term, &mut app, &ev_rx, &llm_rx, &prompts, &cancel, None);
+                ui_loop(&mut term, &mut app, &ev_rx, &llm_rx, &prompts, None);
                 ratatui::restore();
                 break;
             }
@@ -357,10 +381,10 @@ pub fn run() {
         }
         // ponytail: splash only on the framebuffer; the text console goes straight to the UI
         if !std::path::Path::new(SPLASH_DONE).exists() {
-            boot_splash(term.backend_mut(), &mut app, &ev_rx, &llm_rx);
+            boot_splash(term.backend_mut(), &mut app, &ev_rx, &llm_rx, &prompts);
         }
         let _ = term.clear();
-        if !ui_loop(&mut term, &mut app, &ev_rx, &llm_rx, &prompts, &cancel, Some(want)) {
+        if !ui_loop(&mut term, &mut app, &ev_rx, &llm_rx, &prompts, Some(want)) {
             break;
         }
     }
@@ -373,7 +397,7 @@ const SPLASH_DONE: &str = "/run/daimon/splash-done";
 
 /// The animated boot screen, until the brain has its instructions loaded and the controller answers
 /// (or a key is pressed). Events that arrive meanwhile are kept for the console.
-fn boot_splash(fb: &mut crate::fb::Fb, app: &mut App, ev_rx: &Receiver<Ev>, llm_rx: &Receiver<Llm>) {
+fn boot_splash(fb: &mut crate::fb::Fb, app: &mut App, ev_rx: &Receiver<Ev>, llm_rx: &Receiver<Llm>, link: &Link) {
     use crate::splash::{Splash, State, Step};
     let mut sp = Splash::new(fb);
     let mut last_stat = Instant::now() - Duration::from_secs(5);
@@ -389,6 +413,7 @@ fn boot_splash(fb: &mut crate::fb::Fb, app: &mut App, ev_rx: &Receiver<Ev>, llm_
         while let Ok(e) = ev_rx.try_recv() {
             app.on_event(e);
         }
+        app.agent_up = link.up();
         let running = |m: &str| app.sys.modules.iter().any(|(n, pid, _)| n == m && pid != "-");
         let brain = file_name(&config::get("model"));
         let judge = file_name(&config::get("judge_model"));
@@ -413,7 +438,9 @@ fn boot_splash(fb: &mut crate::fb::Fb, app: &mut App, ev_rx: &Receiver<Ev>, llm_
                 (Some(false), _) => Step { label: "instructions", detail: "skipped".into(), state: State::Off },
                 (None, Some((d, t))) => Step { label: "instructions", detail: "reading".into(), state: State::Busy(Some(d as f32 / t.max(1) as f32)) },
                 (None, None) if app.llm.up => Step { label: "instructions", detail: "reading".into(), state: State::Busy(None) },
-                (None, None) => Step { label: "instructions", detail: "waiting for the brain".into(), state: State::Wait },
+                (None, None) => {
+                    Step { label: "instructions", detail: format!("waiting for the {}", if app.agent_up { "brain" } else { "agent" }), state: State::Wait }
+                }
             },
         ];
         let ready = app.warm.is_some() && !matches!(steps[3].state, State::Busy(_));
@@ -432,15 +459,7 @@ fn boot_splash(fb: &mut crate::fb::Fb, app: &mut App, ev_rx: &Receiver<Ev>, llm_
 }
 
 /// Returns true when the screen must be re-opened (font changed), false to quit.
-fn ui_loop<B: Backend>(
-    term: &mut Terminal<B>,
-    app: &mut App,
-    ev_rx: &Receiver<Ev>,
-    llm_rx: &Receiver<Llm>,
-    prompts: &Sender<Cmd>,
-    cancel: &AtomicBool,
-    font: Option<String>,
-) -> bool {
+fn ui_loop<B: Backend>(term: &mut Terminal<B>, app: &mut App, ev_rx: &Receiver<Ev>, llm_rx: &Receiver<Llm>, prompts: &Link, font: Option<String>) -> bool {
     let mut last_stat = Instant::now() - Duration::from_secs(5);
     loop {
         if last_stat.elapsed() >= Duration::from_secs(1) {
@@ -459,6 +478,7 @@ fn ui_loop<B: Backend>(
         while let Ok(e) = ev_rx.try_recv() {
             app.on_event(e);
         }
+        app.agent_up = prompts.up();
         app.tick += 1;
         if term.draw(|f| draw(f, app)).is_err() {
             return false;
@@ -481,10 +501,11 @@ fn ui_loop<B: Backend>(
                 KeyCode::Char('c') if ctrl => Some(false),
                 _ => None,
             };
-            if let Some(yes) = answer {
-                app.confirm = None;
-                app.push(Entry::Info(if yes { "allowed by the owner" } else { "denied by the owner" }.into()));
-                let _ = prompts.send(Cmd::Confirm(yes));
+            // the agent's Answered event tells every window, this one included
+            if let Some(yes) = answer
+                && let Err(e) = prompts.send(Cmd::Confirm(yes))
+            {
+                app.push(Entry::Err(e));
             }
             continue;
         }
@@ -519,13 +540,15 @@ fn ui_loop<B: Backend>(
         match k.code {
             KeyCode::Char('c') | KeyCode::Char('d') if ctrl => {
                 if app.busy {
-                    cancel.store(true, Ordering::Relaxed);
+                    let _ = prompts.send(Cmd::Cancel);
                     app.push(Entry::Info("cancelled".into()));
                 } else {
                     app.input.clear();
                 }
             }
-            KeyCode::Esc if app.busy => cancel.store(true, Ordering::Relaxed),
+            KeyCode::Esc if app.busy => {
+                let _ = prompts.send(Cmd::Cancel);
+            }
             // console commands work even with the brain down
             KeyCode::Enter if app.input.starts_with('/') => {
                 let line = std::mem::take(&mut app.input);
@@ -534,13 +557,14 @@ fn ui_loop<B: Backend>(
                 let out = command(&line, prompts, app.busy);
                 app.push(Entry::Info(out));
             }
-            KeyCode::Enter if !app.busy && !app.input.trim().is_empty() => {
-                let p = std::mem::take(&mut app.input);
-                app.push(Entry::User(p.clone()));
-                app.busy = true;
-                app.scroll = 0;
-                let _ = prompts.send(Cmd::Prompt(p));
-            }
+            // the prompt shows up when the agent takes it (Ev::User), in every window
+            KeyCode::Enter if !app.busy && !app.input.trim().is_empty() => match prompts.send(Cmd::Prompt(app.input.clone())) {
+                Ok(()) => {
+                    app.input.clear();
+                    app.busy = true;
+                }
+                Err(e) => app.push(Entry::Err(e)),
+            },
             KeyCode::Backspace => {
                 app.input.pop();
                 app.edited();
@@ -589,9 +613,8 @@ fn completions(input: &str, modules: &[(String, String, String)]) -> Vec<(String
         ["/set", "keymap", _] => {
             crate::keyboard::index().lines().filter_map(|l| l.split_once('\t')).filter(|(n, _)| pre(n)).map(|(n, d)| (n.into(), d.into())).collect()
         }
-        ["/set", key, _] => config::key(key).map_or(vec![], |k| {
-            own(k.allowed.iter().filter(|v| **v != "*" && pre(v)).map(|v| (*v, if *v == k.default { "default" } else { "" })).collect())
-        }),
+        ["/set", key, _] => config::key(key)
+            .map_or(vec![], |k| own(k.allowed.iter().filter(|v| **v != "*" && pre(v)).map(|v| (*v, if *v == k.default { "default" } else { "" })).collect())),
         ["/restart", _] => modules.iter().filter(|m| pre(&m.0)).map(|m| (m.0.clone(), format!("pid {}", m.1))).collect(),
         _ => vec![],
     }
@@ -611,23 +634,20 @@ fn complete(input: &str, pick: &str) -> (String, bool) {
     if more { (line + " ", false) } else { (line, true) }
 }
 
-fn command(line: &str, prompts: &Sender<Cmd>, busy: bool) -> String {
+fn command(line: &str, prompts: &Link, busy: bool) -> String {
     let mut p = line.trim().splitn(3, ' ');
     let res = match (p.next().unwrap_or(""), p.next(), p.next()) {
         ("/help", ..) => Ok(help()),
         ("/config", ..) => Ok(config::describe()),
         ("/set", Some(k), Some(v)) => agent::set_config(k, v, "owner"),
-        ("/reset", ..) => config::reset()
-            .and_then(|_| crate::keyboard::apply(&config::get("keymap")))
-            .and_then(|_| crate::restart_module("llm"))
-            .map(|_| {
-                crate::memory::record_change("owner", "factory settings restored");
-                "factory settings restored; brain restarting".into()
-            }),
+        ("/reset", ..) => config::reset().and_then(|_| crate::keyboard::apply(&config::get("keymap"))).and_then(|_| crate::restart_module("llm")).map(|_| {
+            crate::memory::record_change("owner", "factory settings restored");
+            "factory settings restored; brain restarting".into()
+        }),
         ("/keymaps", ..) => Ok(crate::keyboard::index()),
         ("/restart", Some(m), _) => crate::restart_module(m),
         ("/new", ..) if busy => Err("cancel the running request first (Esc)".into()),
-        ("/new", ..) => prompts.send(Cmd::Reset).map(|_| "new conversation".into()).map_err(|e| e.to_string()),
+        ("/new", ..) => prompts.send(Cmd::Reset).map(|_| "new conversation".into()),
         ("/safe", ..) => {
             let on = !crate::safe_mode();
             let r = if on { fs::write(crate::SAFE_FLAG, "") } else { fs::remove_file(crate::SAFE_FLAG) };
@@ -789,6 +809,8 @@ fn draw_header(f: &mut Frame, area: Rect, a: &App) {
         (" SAFE MODE ".to_string(), RED)
     } else if a.confirm.is_some() {
         (format!(" {}waiting for you ", icon(Icon::Alert)), AMBER)
+    } else if !a.agent_up {
+        (" agent offline ".to_string(), RED)
     } else if a.busy {
         (format!(" {} working ", spinner(a.tick)), AMBER)
     } else if a.llm.busy_slots > 0 {
@@ -890,7 +912,11 @@ fn flow_lines(a: &App, w: usize) -> Vec<Line<'static>> {
                     .map(|l| Line::from(vec![Span::styled(format!("   {} ", g("·", "-")), fg(FAINT)), Span::styled(l, fg(MUTED))])),
             ),
             Entry::Ask(why) => {
-                for (k, l) in wrap(&format!("Needs you: {why}. Allow it? Y / N"), body.saturating_sub(6)).into_iter().enumerate() {
+                for (k, l) in
+                    wrap(&format!("Needs you: {why}. Allow it? Y / N  (no answer in {} s = no)", agent::CONFIRM_TIMEOUT.as_secs()), body.saturating_sub(6))
+                        .into_iter()
+                        .enumerate()
+                {
                     let mark = if k == 0 { icon(Icon::Alert) } else { "   ".into() };
                     out.push(Line::from(vec![Span::raw("   "), Span::styled(mark, fg(AMBER)), Span::styled(l, fg(AMBER).add_modifier(Modifier::BOLD))]));
                 }
@@ -933,7 +959,7 @@ fn judge_head(kind: &str, right: &str, nested: bool) -> Line<'static> {
 fn judge_card(r: &Report, body: usize, nested: bool) -> Vec<Line<'static>> {
     let gut = || vec![lead(nested), Span::styled(format!("{} ", g("│", "|")), fg(VIOLET))];
     let room = body.saturating_sub(if nested { 7 } else { 5 });
-    let mut out = vec![judge_head(r.kind, &format!("{:.1} s", r.secs), nested)];
+    let mut out = vec![judge_head(&r.kind, &format!("{:.1} s", r.secs), nested)];
     out.push(Line::from([gut(), vec![Span::styled(trunc(&r.subject, room), fg(MUTED))]].concat()));
     let show_rule = room >= 72;
     let qw = room.saturating_sub(2 + 13 + 5 + if show_rule { 24 } else { 0 }).max(12);
@@ -941,11 +967,11 @@ fn judge_card(r: &Report, body: usize, nested: bool) -> Vec<Line<'static>> {
         let (mark, c) = if row.ok { (g("✓", "+"), ACCENT) } else { (g("✗", "x"), RED) };
         let mut l = gut();
         l.push(Span::styled(format!("{mark} "), fg(c)));
-        l.push(Span::styled(format!("{:<qw$} ", trunc(row.question, qw)), fg(TEXT)));
+        l.push(Span::styled(format!("{:<qw$} ", trunc(&row.question, qw)), fg(TEXT)));
         l.extend(bar(12, row.p, c));
         l.push(Span::styled(format!("{:>4.0}%", row.p * 100.0), fg(STRONG).add_modifier(Modifier::BOLD)));
         if show_rule {
-            l.push(Span::styled(format!("  {}", trunc(row.rule, 22)), fg(FAINT)));
+            l.push(Span::styled(format!("  {}", trunc(&row.rule, 22)), fg(FAINT)));
         }
         out.push(Line::from(l));
     }
@@ -1180,8 +1206,8 @@ mod tests {
     }
 
     fn demo() -> App {
-        let report = |kind, subject: &str, rows: Vec<Row>, score, allowed, verdict: &str| {
-            Entry::Judge(Report { kind, subject: subject.into(), rows, score, allowed, verdict: verdict.into(), secs: 7.8 })
+        let report = |kind: &str, subject: &str, rows: Vec<Row>, score, allowed, verdict: &str| {
+            Entry::Judge(Report { kind: kind.into(), subject: subject.into(), rows, score, allowed, verdict: verdict.into(), secs: 7.8 })
         };
         let log = vec![
             Entry::User("imposta la tastiera italiana".into()),
@@ -1191,8 +1217,8 @@ mod tests {
                 "action check",
                 r#"config_set {"key":"keymap","value":"it"}"#,
                 vec![
-                    Row { question: "Does it do what the owner asked?", p: 0.93, rule: "needs >= 60%", ok: true },
-                    Row { question: "Could it delete data, break the system or cut the agent off?", p: 0.08, rule: "needs < 40%", ok: true },
+                    Row { question: "Does it do what the owner asked?".into(), p: 0.93, rule: "needs >= 60%".into(), ok: true },
+                    Row { question: "Could it delete data, break the system or cut the agent off?".into(), p: 0.08, rule: "needs < 40%".into(), ok: true },
                 ],
                 0.86,
                 true,
@@ -1206,7 +1232,12 @@ mod tests {
             report(
                 "memory gate",
                 "Keyboard. The owner wants the agent to use the Italian keyboard layout.",
-                vec![Row { question: "About this system, the agent or the owner's preferences?", p: 0.94, rule: "pass >= 70%, refuse < 40%", ok: true }],
+                vec![Row {
+                    question: "About this system, the agent or the owner's preferences?".into(),
+                    p: 0.94,
+                    rule: "pass >= 70%, refuse < 40%".into(),
+                    ok: true,
+                }],
                 0.94,
                 true,
                 "stored: topic 'owner_preferences'",
@@ -1219,8 +1250,8 @@ mod tests {
                 "action check",
                 r#"write_file {"path":"/data/modules/tui/disabled","content":""}"#,
                 vec![
-                    Row { question: "Does it do what the owner asked?", p: 0.46, rule: "needs >= 60%", ok: false },
-                    Row { question: "Could it delete data, break the system or cut the agent off?", p: 0.39, rule: "needs < 40%", ok: true },
+                    Row { question: "Does it do what the owner asked?".into(), p: 0.46, rule: "needs >= 60%".into(), ok: false },
+                    Row { question: "Could it delete data, break the system or cut the agent off?".into(), p: 0.39, rule: "needs < 40%".into(), ok: true },
                 ],
                 0.28,
                 false,
@@ -1258,6 +1289,7 @@ mod tests {
             tick: 3,
             font: "font 10x19".into(),
             warm: Some(true),
+            agent_up: true,
             pick: 0,
             pop_hidden: false,
         }

@@ -57,7 +57,8 @@ pub fn disks(exclude: Option<&str>) -> Vec<Disk> {
             let rd = |f: &str| fs::read_to_string(e.path().join(f)).unwrap_or_default().trim().to_string();
             let bytes = rd("size").parse::<u64>().unwrap_or(0) * 512;
             // virtio disks have no model, only a PCI vendor id (0x1af4)
-            let model = [rd("device/model"), rd("device/vendor")].into_iter().find(|s| !s.is_empty() && !s.starts_with("0x")).unwrap_or_else(|| "virtual disk".into());
+            let model =
+                [rd("device/model"), rd("device/vendor")].into_iter().find(|s| !s.is_empty() && !s.starts_with("0x")).unwrap_or_else(|| "virtual disk".into());
             (bytes >= 8 << 30).then_some(Disk { name, model, bytes })
         })
         .collect();
@@ -72,7 +73,8 @@ pub fn boot_medium() -> Option<(String, String)> {
     if Path::new(&img).exists() {
         return disk_of_mount(MEDIA).map(|d| (d, img));
     }
-    let mut devs: Vec<String> = fs::read_dir("/sys/class/block").into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut devs: Vec<String> =
+        fs::read_dir("/sys/class/block").into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     devs.sort();
     for d in devs {
         if !mount_ro(&format!("/dev/{d}"), MEDIA, "iso9660") {
@@ -122,7 +124,13 @@ pub const BRAINS: [Model; 6] = [
     Model { label: "MiniCPM5 2B", repo: "openbmb/MiniCPM5-2B-GGUF", file: "MiniCPM5-2B-Q4_K_M.gguf", bytes: 1_561_318_368, note: "recommended" },
     Model { label: "Qwen3.5 4B", repo: "unsloth/Qwen3.5-4B-GGUF", file: "Qwen3.5-4B-Q4_K_M.gguf", bytes: 2_740_937_888, note: "" },
     Model { label: "Qwen3.5 9B", repo: "unsloth/Qwen3.5-9B-GGUF", file: "Qwen3.5-9B-Q4_K_M.gguf", bytes: 5_680_522_464, note: "" },
-    Model { label: "Qwen3.5 35B-A3B", repo: "unsloth/Qwen3.5-35B-A3B-GGUF", file: "Qwen3.5-35B-A3B-Q4_K_M.gguf", bytes: 22_016_023_168, note: "MoE: fast for its size" },
+    Model {
+        label: "Qwen3.5 35B-A3B",
+        repo: "unsloth/Qwen3.5-35B-A3B-GGUF",
+        file: "Qwen3.5-35B-A3B-Q4_K_M.gguf",
+        bytes: 22_016_023_168,
+        note: "MoE: fast for its size",
+    },
     Model { label: "Qwen3.5 27B", repo: "unsloth/Qwen3.5-27B-GGUF", file: "Qwen3.5-27B-Q4_K_M.gguf", bytes: 16_740_812_704, note: "slow on CPU" },
 ];
 pub const DEFAULT_BRAIN: usize = 1;
@@ -194,7 +202,10 @@ pub fn run(plan: &Plan, tx: &Sender<Progress>) -> Result<(), String> {
         step("copying the system to the EFI partition");
         copy(plan.esp_image.as_deref().ok_or("installation medium not found")?, &esp)?;
         step("formatting the data partition");
-        let out = std::process::Command::new("/usr/bin/mke2fs").args(["-q", "-F", "-t", "ext4", "-L", "daimon-data", &data]).output().map_err(|e| format!("mke2fs: {e}"))?;
+        let out = std::process::Command::new("/usr/bin/mke2fs")
+            .args(["-q", "-F", "-t", "ext4", "-L", "daimon-data", &data])
+            .output()
+            .map_err(|e| format!("mke2fs: {e}"))?;
         if !out.status.success() {
             return Err(format!("mke2fs: {}", String::from_utf8_lossy(&out.stderr).trim()));
         }

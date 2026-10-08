@@ -39,10 +39,12 @@ flowchart LR
     K --> I[daimon · PID 1<br/>mounts, network, supervisor]
     I --> LLM[llm<br/>llama-server · the brain<br/>:8080]
     I --> J[judge<br/>llama-server · the controller<br/>127.0.0.1:8081]
-    I --> T[tui<br/>agent + console on tty1]
-    T -- tool calls --> LLM
-    T -- "is this safe? is this what the owner asked?" --> J
-    T --> D[(/data<br/>models · memory · settings)]
+    I --> A[agent<br/>the tool-calling loop<br/>/run/daimon/agent.sock]
+    I --> T[tui<br/>console on tty1]
+    T -- "prompts, answers / events" --> A
+    A -- tool calls --> LLM
+    A -- "is this safe? is this what the owner asked?" --> J
+    A --> D[(/data<br/>models · memory · settings)]
 ```
 
 **The brain proposes, the controller judges, the code decides.**
@@ -135,7 +137,7 @@ Console commands work even when the brain is down; type `/` to see them:
 | `/config` | show every setting |
 | `/set <key> <value>` | change a setting, e.g. `/set keymap it`, `/set ctx 65536`, `/set ui_font 24` |
 | `/keymaps` | list the keyboard layouts |
-| `/restart <module>` | restart `llm`, `judge` or `tui` |
+| `/restart <module>` | restart `llm`, `judge`, `agent` or `tui` |
 | `/new` | new conversation |
 | `/safe` | safe mode on/off: factory settings, no `/data` modules, until reboot |
 | `/reset` | factory settings |
@@ -185,18 +187,22 @@ For the dev image, put a brain and a controller in `build/data/models/` as `curr
 `build.sh` fetches and builds the static `mke2fs` and unpacks `xorriso` itself. QEMU needs KVM; on WSL:
 `sudo usermod -aG kvm $USER`, then `wsl --shutdown`.
 
-Tests: `cargo test --target x86_64-unknown-linux-musl` in `daimon/`.
+Tests: `cargo test` in `daimon/`. Acceptance (the real agent and brain over the socket, a few minutes on CPU):
+`tests/acceptance.py daimon/target/release/daimon build/llama.cpp/build-cpu/bin/llama-server <brain.gguf>`.
+On GitHub, `ci` runs on every push; `acceptance` runs on pull requests to `main` once the owner approves it.
 
 ### Layout
 
 ```
 daimon/src/      main.rs     PID 1: mounts, supervisor, watchdog, Ctrl+Alt+Del
                agent.rs    the tool-calling loop, tools, system prompt
+               link.rs     the agent as a service: socket, events, replay; the console's client
                judge.rs    the controller's questions and thresholds
                memory.rs   notes, index, BM25, recorded system changes
                tui.rs      the console;  setup.rs  the install wizard;  splash.rs  the boot splash
                install.rs  disks, GPT, downloads;  fb.rs  framebuffer backend;  keyboard.rs  keymaps
                config.rs   settings table;  net.rs  DHCP client, hostname
+tests/         acceptance test (agent + brain over the socket)
 bench/         controller benchmark (notes and actions) and its raw results
 tools/         build-time generators: fonts, keymaps, wordmark
 kernel/        kernel config fragment

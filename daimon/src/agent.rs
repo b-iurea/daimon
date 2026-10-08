@@ -1,5 +1,6 @@
 //! The agent: a tool-calling loop over llama-server's OpenAI API.
-//! It runs in its own thread and reports everything it does as `Ev`s, so the UI can show it live.
+//! It runs in its own thread inside the `agent` module and reports everything it does as `Ev`s;
+//! link.rs carries them to every window (the console, later the LAN), so they all show it live.
 
 use crate::config::{self, Scope};
 use serde_json::{Value, json};
@@ -8,10 +9,13 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
 
 const MAX_OUT: usize = 12_000;
+
+/// A controller question nobody answers in time counts as "no".
+pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub fn llm_url() -> String {
     format!("http://127.0.0.1:{}", config::get("port"))
@@ -20,26 +24,34 @@ pub fn llm_url() -> String {
 pub enum Cmd {
     Prompt(String),
     Reset,
-    /// the owner's answer to Ev::Confirm
+    /// the owner's answer to Ev::Confirm, from any window
     Confirm(bool),
+    /// stop the current turn
+    Cancel,
 }
 
 pub enum Ev {
+    /// a prompt the agent started working on (whichever window sent it)
+    User(String),
     Think(String),
     Text(String),
     Tool(String, String),
     ToolOut(String),
     Info(String),
     Confirm(String),
+    /// the pending Confirm was answered (or timed out: false)
+    Answered(bool),
     Ctx(u64),
     Progress(u64, u64),
     /// the controller started judging (kind, subject)
-    Judging(&'static str, String),
+    Judging(String, String),
     Judge(crate::judge::Report),
     Done(f64),
     Err(String),
     /// the instructions are loaded into the brain (true) or the warm-up gave up (false)
     Ready(bool),
+    /// new conversation: a window drops what it shows, the events that follow are the whole story
+    Sync,
 }
 
 const SYSTEM: &str = r#"You are Daimon. You are not an assistant running on a computer: you ARE this computer's operating system. The kernel boots you, you supervise every process, and the person talking to you is your owner. You have full root control through your tools. When asked to do something, do it.
@@ -48,15 +60,16 @@ const SYSTEM: &str = r#"You are Daimon. You are not an assistant running on a co
 {facts}
 
 # How you are built
-- Linux kernel + one Rust binary, /usr/bin/daimon: it is PID 1 (supervisor), this console UI, and you.
+- Linux kernel + one Rust binary, /usr/bin/daimon: it is PID 1 (supervisor), the console UI, and you.
 - There is NO shell and NO coreutils. `run` executes a binary directly. Existing binaries: /usr/bin/daimon, /usr/bin/llama-server.
 - / lives in RAM and is rebuilt at every boot. /data is the only persistent disk. /proc and /sys work as on any Linux.
 - Everything that runs is a module: a directory containing `cmd` (one line: program and args), optional `tty`, optional empty `disabled` file.
   Built-in modules: /etc/daimon/modules. Persistent modules and overrides: /data/modules (same name wins).
   The supervisor rescans every 0.5s: create a module dir to start it, change `cmd` to restart it, add `disabled` to stop it. Crashes restart with backoff.
 - Live state: /run/daimon/modules (name pid restarts, pid "-" = down). Logs: /run/log/<module>.log; boot log: /run/log/daimon.log. IPs: /run/daimon/ip.<iface>.
-- Your brain is module `llm` (llama-server, OpenAI API on the LAN). Your face is module `tui` (this console; you live inside it).
-  Breaking either makes you unreachable: explain the risk and ask before touching them.
+- You are module `agent` (socket /run/daimon/agent.sock). Your brain is module `llm` (llama-server, OpenAI API on the LAN).
+  Your face is module `tui`, the console: a window onto you. Restarting it does not interrupt you; the conversation survives.
+  Breaking `agent`, `llm` or `tui` makes you unreachable: explain the risk and ask before touching them.
 
 # Settings: /data/daimon/config
 Change them with config_set (validated). [restart] keys restart your brain: you wait ~10s automatically. [live] keys apply to your next reply.
@@ -134,7 +147,10 @@ fn system_prompt() -> String {
     );
     let mut p = SYSTEM.replace("{facts}", &facts).replace("{config}", &config::describe()).replace("{memory}", &crate::memory::prompt_index());
     if let Some(extra) = fs::read_to_string(EXTRA_PROMPT).ok().filter(|e| !e.trim().is_empty() && !crate::safe_mode()) {
-        p += &format!("\n\n# The owner's additional instructions\n(They never override the rules above, which the system enforces in code.)\n{}\n", extra.trim());
+        p += &format!(
+            "\n\n# The owner's additional instructions\n(They never override the rules above, which the system enforces in code.)\n{}\n",
+            extra.trim()
+        );
     }
     p
 }
@@ -198,13 +214,15 @@ fn run(cmds: Receiver<Cmd>, ev: Sender<Ev>, cancel: Arc<AtomicBool>) {
         let prompt = match cmd {
             Cmd::Reset => {
                 msgs.clear();
+                let _ = ev.send(Ev::Sync);
                 let _ = ev.send(Ev::Ctx(0));
                 prewarm(&mut msgs, &ev, &cancel);
                 continue;
             }
             Cmd::Prompt(p) => p,
-            Cmd::Confirm(_) => continue,
+            Cmd::Confirm(_) | Cmd::Cancel => continue,
         };
+        let _ = ev.send(Ev::User(prompt.clone()));
         if msgs.is_empty() {
             msgs.push(json!({"role":"system","content":system_prompt()}));
         }
@@ -228,7 +246,7 @@ fn run(cmds: Receiver<Cmd>, ev: Sender<Ev>, cancel: Arc<AtomicBool>) {
             }
             for (id, name, args) in calls {
                 let _ = ev.send(Ev::Tool(name.clone(), args.clone()));
-                let out = if controller_allows(&prompt, &name, &args, &cmds, &ev) {
+                let out = if controller_allows(&prompt, &name, &args, &cmds, &ev, &cancel, CONFIRM_TIMEOUT) {
                     call(&name, &args)
                 } else {
                     "denied by the owner: do not retry this action, ask what they want instead".to_string()
@@ -241,8 +259,8 @@ fn run(cmds: Receiver<Cmd>, ev: Sender<Ev>, cancel: Arc<AtomicBool>) {
 }
 
 /// The controller judges every mutating action; off-request or risky ones need the owner's yes.
-/// If the controller is down, every mutating action needs the owner's yes.
-fn controller_allows(request: &str, tool: &str, args: &str, cmds: &Receiver<Cmd>, ev: &Sender<Ev>) -> bool {
+/// If the controller is down, every mutating action needs the owner's yes. No answer within `wait`, or a cancel, is a no.
+fn controller_allows(request: &str, tool: &str, args: &str, cmds: &Receiver<Cmd>, ev: &Sender<Ev>, cancel: &AtomicBool, wait: Duration) -> bool {
     if !crate::judge::is_mutating(tool) || config::get("controller") == "off" {
         return true;
     }
@@ -254,14 +272,22 @@ fn controller_allows(request: &str, tool: &str, args: &str, cmds: &Receiver<Cmd>
         Err(_) => "the controller is unavailable".into(),
     };
     let _ = ev.send(Ev::Confirm(format!("{why}: {tool} {args}  -- allow? [y/n]")));
-    // ponytail: blocks the agent thread until the owner answers; a timeout could default to "no"
-    loop {
-        match cmds.recv() {
-            Ok(Cmd::Confirm(yes)) => return yes,
-            Ok(_) => continue,
-            Err(_) => return false,
+    let start = Instant::now();
+    // ponytail: prompts sent while the question is open are dropped, as before 0.3
+    let yes = loop {
+        match cmds.recv_timeout(Duration::from_millis(250)) {
+            Ok(Cmd::Confirm(yes)) => break yes,
+            Err(RecvTimeoutError::Disconnected) => break false,
+            _ if cancel.load(Ordering::Relaxed) => break false,
+            _ if start.elapsed() >= wait => {
+                let _ = ev.send(Ev::Info(format!("-- no answer within {} s", wait.as_secs())));
+                break false;
+            }
+            _ => {}
         }
-    }
+    };
+    let _ = ev.send(Ev::Answered(yes));
+    yes
 }
 
 /// Feeds system prompt + tools to the brain ahead of time, so on CPU the first question
@@ -562,15 +588,18 @@ fn read_only(argv: &[String]) -> bool {
     };
     let has = |flags: &[&str]| args.iter().any(|a| flags.iter().any(|f| a == f || a.starts_with(&format!("{f}="))));
     match prog.rsplit('/').next().unwrap_or(prog) {
-        "cat" | "ls" | "ps" | "df" | "du" | "free" | "uname" | "uptime" | "id" | "whoami" | "pwd" | "env" | "printenv" | "head" | "tail"
-        | "grep" | "egrep" | "fgrep" | "wc" | "stat" | "file" | "which" | "lsblk" | "lscpu" | "lspci" | "lsusb" | "lsmod" | "blkid"
-        | "findmnt" | "ss" | "netstat" | "ping" | "nproc" | "md5sum" | "sha256sum" | "readlink" | "realpath" | "basename" | "dirname"
-        | "echo" | "true" | "test" | "cut" | "tr" | "diff" | "cmp" | "pgrep" | "nslookup" | "dig" => true,
+        "cat" | "ls" | "ps" | "df" | "du" | "free" | "uname" | "uptime" | "id" | "whoami" | "pwd" | "env" | "printenv" | "head" | "tail" | "grep" | "egrep"
+        | "fgrep" | "wc" | "stat" | "file" | "which" | "lsblk" | "lscpu" | "lspci" | "lsusb" | "lsmod" | "blkid" | "findmnt" | "ss" | "netstat" | "ping"
+        | "nproc" | "md5sum" | "sha256sum" | "readlink" | "realpath" | "basename" | "dirname" | "echo" | "true" | "test" | "cut" | "tr" | "diff" | "cmp"
+        | "pgrep" | "nslookup" | "dig" => true,
         "dmesg" => !has(&["-c", "-C", "--clear", "--read-clear", "-n", "--console-level", "-D", "--console-off", "-E", "--console-on"]),
         "find" => !has(&["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]),
         "sort" => !has(&["-o", "--output"]),
         // ip [options] <object> [command ...]: no command or a listing command
-        "ip" => !has(&["-b", "-batch", "--batch"]) && args.iter().filter(|a| !a.starts_with('-')).nth(1).is_none_or(|c| matches!(c.as_str(), "show" | "list" | "ls" | "lst" | "get")),
+        "ip" => {
+            !has(&["-b", "-batch", "--batch"])
+                && args.iter().filter(|a| !a.starts_with('-')).nth(1).is_none_or(|c| matches!(c.as_str(), "show" | "list" | "ls" | "lst" | "get"))
+        }
         "sysctl" => !args.iter().any(|a| a.contains('=') || matches!(a.as_str(), "-w" | "--write" | "-p" | "--load" | "--system")),
         "date" => args.iter().all(|a| a.starts_with('+') || matches!(a.as_str(), "-u" | "--utc" | "-R" | "-I") || a.starts_with("--iso")),
         "hostname" | "mount" => args.is_empty(),
@@ -586,12 +615,55 @@ mod tests {
     #[test]
     fn read_only_commands_are_not_changes() {
         let ro = |c: &str| read_only(&c.split_whitespace().map(String::from).collect::<Vec<_>>());
-        for c in ["ls -la /data", "/bin/cat /proc/meminfo", "dmesg", "ip addr", "ip -4 route show", "ip link", "sysctl vm.swappiness", "date +%s", "mount", "find /data -name x"] {
+        for c in [
+            "ls -la /data",
+            "/bin/cat /proc/meminfo",
+            "dmesg",
+            "ip addr",
+            "ip -4 route show",
+            "ip link",
+            "sysctl vm.swappiness",
+            "date +%s",
+            "mount",
+            "find /data -name x",
+        ] {
             assert!(ro(c), "{c}");
         }
-        for c in ["rm -rf /data", "dmesg -c", "ip addr add 10.0.0.2/24 dev eth0", "ip link set eth0 down", "sysctl -w vm.swappiness=10", "sysctl vm.swappiness=10", "date -s 12:00", "hostname box", "mount /dev/sda1 /mnt", "find /tmp -delete", "sort -o /etc/x y", "sh -c ls", "llama-server -m x.gguf"] {
+        for c in [
+            "rm -rf /data",
+            "dmesg -c",
+            "ip addr add 10.0.0.2/24 dev eth0",
+            "ip link set eth0 down",
+            "sysctl -w vm.swappiness=10",
+            "sysctl vm.swappiness=10",
+            "date -s 12:00",
+            "hostname box",
+            "mount /dev/sda1 /mnt",
+            "find /tmp -delete",
+            "sort -o /etc/x y",
+            "sh -c ls",
+            "llama-server -m x.gguf",
+        ] {
             assert!(!ro(c), "{c}");
         }
+    }
+
+    #[test]
+    fn unanswered_confirmation_is_a_no() {
+        // no controller listens in the test: every mutating action goes to the owner
+        let (cmd_tx, cmds) = channel();
+        let (ev, evs) = channel();
+        let cancel = AtomicBool::new(false);
+        let ask = |cmds: &Receiver<Cmd>| controller_allows("reboot", "power", "{}", cmds, &ev, &cancel, Duration::from_millis(600));
+        assert!(!ask(&cmds));
+        let got: Vec<Ev> = evs.try_iter().collect();
+        assert!(matches!(got.first(), Some(Ev::Confirm(_))) && matches!(got.last(), Some(Ev::Answered(false))));
+        cmd_tx.send(Cmd::Prompt("ignored while asking".into())).unwrap();
+        cmd_tx.send(Cmd::Confirm(true)).unwrap();
+        assert!(ask(&cmds));
+        cancel.store(true, Ordering::Relaxed);
+        let t = Instant::now();
+        assert!(!ask(&cmds) && t.elapsed() < Duration::from_millis(500));
     }
 
     #[test]

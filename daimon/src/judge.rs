@@ -59,15 +59,15 @@ const VETOS: [(&str, &str, &str, &str); 4] = [
 
 /// One question the controller answered, as shown to the owner.
 pub struct Row {
-    pub question: &'static str,
+    pub question: String,
     pub p: f64,
-    pub rule: &'static str,
+    pub rule: String,
     pub ok: bool,
 }
 
 /// What the controller was asked and what it answered. Sent live to the console flow.
 pub struct Report {
-    pub kind: &'static str,
+    pub kind: String,
     pub subject: String,
     pub rows: Vec<Row>,
     /// how acceptable the controller finds it, 0..1
@@ -78,7 +78,7 @@ pub struct Report {
 }
 
 fn report(kind: &'static str, subject: &str, t: Instant, rows: Vec<Row>, score: f64, allowed: bool, verdict: String) {
-    crate::agent::emit(Ev::Judge(Report { kind, subject: subject.into(), rows, score, allowed, verdict, secs: t.elapsed().as_secs_f64() }));
+    crate::agent::emit(Ev::Judge(Report { kind: kind.into(), subject: subject.into(), rows, score, allowed, verdict, secs: t.elapsed().as_secs_f64() }));
 }
 
 fn failed(kind: &'static str, subject: &str, t: Instant, e: &str) {
@@ -91,7 +91,7 @@ const MEMORY: &str = "memory gate";
 /// preferences. Returns (allowed, explanation).
 pub fn memory_allowed(note: &str) -> Result<(bool, String), String> {
     let t = Instant::now();
-    crate::agent::emit(Ev::Judging(MEMORY, note.into()));
+    crate::agent::emit(Ev::Judging(MEMORY.into(), note.into()));
     let criteria: serde_json::Map<String, Value> = TOPICS.iter().map(|(k, d, _)| (k.to_string(), json!(d))).collect();
     let a = ask(json!(note), json!({"topic": {"type": "choice", "instructions": "What is this note about?", "criteria": criteria}}))
         .inspect_err(|e| failed(MEMORY, note, t, e))?;
@@ -100,9 +100,9 @@ pub fn memory_allowed(note: &str) -> Result<(bool, String), String> {
     let topic = a["topic"]["choice"].as_str().unwrap_or("");
     let topic_ok = TOPICS.iter().any(|(k, _, ok)| *ok && *k == topic);
     let mut rows = vec![Row {
-        question: "About this system, the agent or the owner's preferences?",
+        question: "About this system, the agent or the owner's preferences?".into(),
         p: mass,
-        rule: "pass >= 70%, refuse < 40%, else vetoes decide",
+        rule: "pass >= 70%, refuse < 40%, else vetoes decide".into(),
         ok: mass >= MEMORY_HIGH,
     }];
     if mass >= MEMORY_HIGH {
@@ -120,7 +120,7 @@ pub fn memory_allowed(note: &str) -> Result<(bool, String), String> {
     let qs: serde_json::Map<String, Value> = VETOS.iter().map(|(k, q, yes, no)| (k.to_string(), noul(q, yes, no))).collect();
     let a = ask(json!(note), Value::Object(qs)).inspect_err(|e| failed(MEMORY, note, t, e))?;
     let vetos: Vec<(&str, f64)> = VETOS.iter().map(|v| (v.0, a[v.0]["noul"].as_f64().unwrap_or(1.0))).collect();
-    rows.extend(VETOS.iter().zip(&vetos).map(|(v, (_, p))| Row { question: v.1, p: *p, rule: "veto if >= 30%", ok: *p < MEMORY_VETO_MAX }));
+    rows.extend(VETOS.iter().zip(&vetos).map(|(v, (_, p))| Row { question: v.1.into(), p: *p, rule: "veto if >= 30%".into(), ok: *p < MEMORY_VETO_MAX }));
     let worst = vetos.iter().cloned().fold(("", 0.0), |a, b| if b.1 > a.1 { b } else { a });
     let score = mass * (1.0 - worst.1);
     Ok(match vetos.iter().find(|(_, p)| *p >= MEMORY_VETO_MAX) {
@@ -153,7 +153,7 @@ const ACTION: &str = "action check";
 pub fn check_action(owner_request: &str, tool: &str, args: &Value) -> Result<Option<String>, String> {
     let t = Instant::now();
     let subject = format!("{tool} {args}");
-    crate::agent::emit(Ev::Judging(ACTION, subject.clone()));
+    crate::agent::emit(Ev::Judging(ACTION.into(), subject.clone()));
     let a = ask(
         json!({"owner_request": owner_request, "proposed_action": {"tool": tool, "arguments": args}}),
         json!({
@@ -166,8 +166,13 @@ pub fn check_action(owner_request: &str, tool: &str, args: &Value) -> Result<Opt
     .inspect_err(|e| failed(ACTION, &subject, t, e))?;
     let (p_match, p_risk) = (a["match"]["noul"].as_f64().unwrap_or(0.0), a["risk"]["noul"].as_f64().unwrap_or(1.0));
     let rows = vec![
-        Row { question: "Does it do what the owner asked?", p: p_match, rule: "needs >= 60%", ok: p_match >= ACTION_MATCH_MIN },
-        Row { question: "Could it delete data, break the system or cut the agent off?", p: p_risk, rule: "needs < 40%", ok: p_risk < ACTION_RISK_MAX },
+        Row { question: "Does it do what the owner asked?".into(), p: p_match, rule: "needs >= 60%".into(), ok: p_match >= ACTION_MATCH_MIN },
+        Row {
+            question: "Could it delete data, break the system or cut the agent off?".into(),
+            p: p_risk,
+            rule: "needs < 40%".into(),
+            ok: p_risk < ACTION_RISK_MAX,
+        },
     ];
     let why = if always_confirm(tool) {
         Some("power actions always need the owner")

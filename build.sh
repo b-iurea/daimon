@@ -71,6 +71,7 @@ EOF
   for f in "$OUT"/fonts/*.fnt; do echo "file /usr/share/daimon/fonts/${f##*/} $f 0644 0 0"; done
   mod llm "/usr/bin/daimon llm"
   mod judge "/usr/bin/daimon judge"
+  mod agent "/usr/bin/daimon agent"
   mod tui "/usr/bin/daimon tui" tty1 10
 } > "$OUT/initramfs.list"
 

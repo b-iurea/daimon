@@ -4,6 +4,7 @@ mod fb;
 mod install;
 mod judge;
 mod keyboard;
+mod link;
 mod memory;
 mod net;
 mod splash;
@@ -22,10 +23,11 @@ fn main() {
     }
     match std::env::args().nth(1).as_deref() {
         Some("tui") => tui::run(),
+        Some("agent") => link::serve(&std::env::args().nth(2).unwrap_or(link::SOCK.into())),
         Some("llm") => config::exec_llm(),
         Some("judge") => judge::exec(),
         _ => {
-            eprintln!("usage: daimon tui|llm|judge   (as PID 1 it boots the system)");
+            eprintln!("usage: daimon tui|agent [socket]|llm|judge   (as PID 1 it boots the system)");
             std::process::exit(2);
         }
     }
