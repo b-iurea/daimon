@@ -19,6 +19,8 @@ jobs:
           V=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
           grep -q "badge/version-$V-" ../README.md || { echo "README.md: version badge is not $V"; exit 1; }
           grep -q "(current: $V)" ../PLAN.md || { echo "PLAN.md: '(current: $V)' missing"; exit 1; }
+          grep -q "^| ${V%.*} ✅ |" ../README.md || { echo "README.md: roadmap row ${V%.*} not ticked ✅"; exit 1; }
+          grep -q "^| \*\*$V\*\* |.*✅" ../PLAN.md || { echo "PLAN.md: roadmap row $V not ticked ✅"; exit 1; }
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
